@@ -77,3 +77,10 @@ desktop.ini
 # LLM config — contains API key, must never be committed.
 ACLS_Unity/Assets/Resources/LlmConfig.asset
 ACLS_Unity/Assets/Resources/LlmConfig.asset.meta
+
+# IDE
+.idea/
+
+# Locus package (local/private, not for version control)
+ACLS_Unity/Locus/
+ACLS_Unity/Packages/com.farlocus.locus/
