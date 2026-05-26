@@ -1,0 +1,16 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 07f599014aa951240bce3d80218d5069, type: 3}
+  m_Name: LlmPromptConfig
+  m_EditorClassIdentifier:
+  CharacterExpansionMd: {fileID: 4900000, guid: 1ff6ecc1206e80448ae6b93be8e204c7, type: 3}
+  SystemPromptMd: {fileID: 4900000, guid: a3c7f821d04e56b8f1c29ae305d78b4f, type: 3}

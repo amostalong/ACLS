@@ -1,7 +1,9 @@
 {
     "name": "ACLS.Runtime",
     "rootNamespace": "ACLS",
-    "references": [],
+    "references": [
+        "Unity.TextMeshPro"
+    ],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
