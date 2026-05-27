@@ -36,6 +36,8 @@ namespace ACLS.Authoring
                 return result;
             }
 
+            result.Thinking = expansion.Thinking ?? "";
+
             // Apply expansion to the player character immediately.
             if (player != null)
             {

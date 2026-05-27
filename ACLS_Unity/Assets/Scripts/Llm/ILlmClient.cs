@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -12,5 +13,10 @@ namespace ACLS.Llm
         Task<LlmResponse> CompleteAsync(string systemPrompt,
                                         IReadOnlyList<ChatMessage> messages,
                                         CancellationToken ct);
+
+        Task<LlmResponse> CompleteStreamAsync(string systemPrompt,
+                                              IReadOnlyList<ChatMessage> messages,
+                                              System.Action<string> onTextDelta,
+                                              CancellationToken ct);
     }
 }

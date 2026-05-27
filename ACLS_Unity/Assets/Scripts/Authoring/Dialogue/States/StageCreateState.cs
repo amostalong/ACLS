@@ -37,6 +37,7 @@ namespace ACLS.Authoring
                 world.Stage.L2Arena = stage.L2Text ?? "";
             }
 
+            result.Thinking = stage.Thinking ?? "";
             result.Narration = stage.SceneDescription ?? stage.L1Text ?? "";
             return result;
         }

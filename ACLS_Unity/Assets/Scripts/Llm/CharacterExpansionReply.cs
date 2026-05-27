@@ -23,6 +23,7 @@ namespace ACLS.Llm
     [Serializable]
     public sealed class CharacterExpansionReply
     {
+        public string Thinking;
         public string FamilyBackground;
         public List<SocialContact> SocialCircle = new List<SocialContact>();
         public string RecentGoal;
@@ -82,6 +83,7 @@ namespace ACLS.Llm
             catch (JsonException ex) { error = "JSON 解析失败：" + ex.Message; return false; }
 
             var result = new CharacterExpansionReply();
+            result.Thinking = ((string)obj["thinking"] ?? "").Trim();
 
             result.FamilyBackground = (string)obj["family_background"] ?? "";
             result.RecentGoal = (string)obj["recent_goal"] ?? "";

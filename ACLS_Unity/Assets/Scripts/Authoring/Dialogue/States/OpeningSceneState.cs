@@ -53,6 +53,7 @@ namespace ACLS.Authoring
             }
 
             result.Narration = reply.Narration ?? "";
+            result.Thinking = reply.Thinking ?? "";
             result.Participants = reply.SceneParticipants ?? new List<LlmReply.Participant>();
             result.Choices = reply.Choices ?? new List<LlmReply.Choice>();
 

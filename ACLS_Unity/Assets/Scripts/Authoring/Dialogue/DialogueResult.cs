@@ -12,6 +12,7 @@ namespace ACLS.Authoring
     public sealed class DialogueResult
     {
         // -------- user-facing --------
+        public string Thinking = "";
         public string Narration = "";
         public List<LlmReply.Choice> Choices = new List<LlmReply.Choice>();
         public List<LlmReply.Participant> Participants = new List<LlmReply.Participant>();

@@ -2,6 +2,7 @@
     "name": "ACLS.Runtime",
     "rootNamespace": "ACLS",
     "references": [
+        "UniTask",
         "Unity.TextMeshPro"
     ],
     "includePlatforms": [],

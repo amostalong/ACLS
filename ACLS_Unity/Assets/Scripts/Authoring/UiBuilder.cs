@@ -82,7 +82,6 @@ namespace ACLS.Authoring
             }
 
             // EventModal — full-canvas overlay, hidden until needed.
-            // Built last so its sort order keeps it above everything.
             var modalGo = NewChild(canvas.transform, "EventModal");
             var modalRt = (RectTransform)modalGo.transform;
             modalRt.anchorMin = Vector2.zero;
@@ -91,7 +90,22 @@ namespace ACLS.Authoring
             modalRt.offsetMax = Vector2.zero;
             modalGo.AddComponent<EventModalView>().Bind(world);
 
-            // CharacterCreationView — full-canvas overlay, shown after world build.
+            // ── NewGameView ── 合并的世界选择+角色创建，无存档时显示。
+            var ngGo = NewChild(canvas.transform, "NewGame");
+            var ngRt = (RectTransform)ngGo.transform;
+            ngRt.anchorMin = Vector2.zero;
+            ngRt.anchorMax = Vector2.one;
+            ngRt.offsetMin = Vector2.zero;
+            ngRt.offsetMax = Vector2.zero;
+            var ngView = ngGo.AddComponent<NewGameView>();
+            ngView.Bind(world, chat, stateMachine);
+
+            // 无存档 → 显示 NewGameView；有存档 → TODO: 跳转到继续游戏界面
+            if (world.Player == null && !SaveManager.SlotExists())
+                ngView.SetVisible(true);
+
+            // 旧视图保留供参考，但不参与流程（可安全删除）。
+            // CharacterCreationView (legacy)
             var creationGo = NewChild(canvas.transform, "CharacterCreation");
             var creationRt = (RectTransform)creationGo.transform;
             creationRt.anchorMin = Vector2.zero;
@@ -100,9 +114,9 @@ namespace ACLS.Authoring
             creationRt.offsetMax = Vector2.zero;
             var creationView = creationGo.AddComponent<CharacterCreationView>();
             creationView.Bind(world, chat, stateMachine);
-            creationView.SetVisible(false);  // WorldSelectionView will show this when ready.
+            creationView.SetVisible(false);
 
-            // WorldSelectionView — topmost overlay, shown first on a new game.
+            // WorldSelectionView (legacy)
             var worldSelGo = NewChild(canvas.transform, "WorldSelection");
             var worldSelRt = (RectTransform)worldSelGo.transform;
             worldSelRt.anchorMin = Vector2.zero;
@@ -111,7 +125,7 @@ namespace ACLS.Authoring
             worldSelRt.offsetMax = Vector2.zero;
             var worldSelView = worldSelGo.AddComponent<WorldSelectionView>();
             worldSelView.Bind(world, chat, stateMachine, onWorldBuilt: () => creationView.SetVisible(true));
-            if (world.Player == null) worldSelView.SetVisible(true);
+            worldSelView.SetVisible(false);
 
             // DebugPanel — top-most overlay, hidden until toggled via HUD button.
             var debugGo = NewChild(canvas.transform, "DebugPanel");

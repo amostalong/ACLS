@@ -24,6 +24,7 @@ namespace ACLS.Llm
     // must NOT be shown to the player.
     public sealed class LlmReply
     {
+        public string Thinking;
         public string Narration;
         public List<Participant> SceneParticipants = new List<Participant>();
         public List<Choice> Choices = new List<Choice>();
@@ -111,6 +112,7 @@ namespace ACLS.Llm
             }
 
             var result = new LlmReply { Narration = narration.Trim() };
+            result.Thinking = ((string)obj["thinking"] ?? "").Trim();
 
             // scene_participants (optional but expected)
             if (obj["scene_participants"] is JArray pArr)

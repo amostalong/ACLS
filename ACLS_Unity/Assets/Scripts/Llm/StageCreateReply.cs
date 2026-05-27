@@ -24,6 +24,7 @@ namespace ACLS.Llm
     [Serializable]
     public sealed class StageCreateReply
     {
+        public string Thinking;
         public string L1Text;              // formatted text for world.Stage.L1Stage
         public string L2Text;              // formatted text for world.Stage.L2Arena
         public string SceneDescription;    // displayed to the player as narration
@@ -64,6 +65,7 @@ namespace ACLS.Llm
             catch (JsonException ex) { error = "JSON 解析失败：" + ex.Message; return false; }
 
             var result = new StageCreateReply();
+            result.Thinking = ((string)obj["thinking"] ?? "").Trim();
 
             // ---- L1 ----
             var l1 = obj["l1_stage"] as JObject;

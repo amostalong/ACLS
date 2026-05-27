@@ -102,7 +102,7 @@ namespace ACLS.Authoring
             var expMd = Resources.Load<TextAsset>("Prompts/CharacterExpansion");
 
             cfg.SystemPromptMd = sysMd ?? CreateInlineTextAsset("SystemPrompt.md", BuiltInSystemPrompt());
-            cfg.CharacterExpansionMd = expMd ?? CreateInlineTextAsset("CharacterExpansion.md", BuiltInExpansionPrompt());
+            cfg.WorldCreatePromptMd = expMd ?? CreateInlineTextAsset("CharacterExpansion.md", BuiltInExpansionPrompt());
 
             if (sysMd == null || expMd == null)
                 Debug.Log("[ACLS] 未找到 Resources/Prompts/*.md，使用内置默认提示词。建议在 Resources/Prompts/ 下放 .md 文件以便自定义。");

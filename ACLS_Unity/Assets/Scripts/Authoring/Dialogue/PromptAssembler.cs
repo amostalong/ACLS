@@ -67,15 +67,15 @@ namespace ACLS.Authoring
             return sb.ToString();
         }
 
-        // Builds the world-build prompt from the player's world description.
-        public string AssembleWorldBuild(string worldDescription)
+        public string AssembleWorldBuild(string roleDescription, string worldDescription)
         {
             var sb = new StringBuilder();
             sb.Append(config?.SystemPrompt ?? "");
-            sb.Append("\n\n").Append(FragmentFor(DialogueStateType.WorldBuild));
-            sb.Append("\n\n").Append(JsonSchemaFor(DialogueStateType.WorldBuild));
-            if (!string.IsNullOrWhiteSpace(worldDescription))
-                sb.Append("\n\n[玩家世界描述]\n").Append(worldDescription);
+            string fragment = FragmentFor(DialogueStateType.WorldBuild) ?? "";
+            fragment = fragment
+                .Replace("{role_description}", roleDescription ?? "")
+                .Replace("{world_description}", worldDescription ?? "");
+            sb.Append("\n\n").Append(fragment);
             return sb.ToString();
         }
 
@@ -123,7 +123,7 @@ namespace ACLS.Authoring
         // Builds the character-expansion prompt with variable substitution.
         public string AssembleCharacterExpansion(CharacterPresets.Preset preset, Character player)
         {
-            string template = config?.CharacterExpansionPrompt ?? "";
+            string template = config?.WorldCreatePrompt ?? "";
             return template
                 .Replace("{name}", player.Name)
                 .Replace("{courtesy}", player.Courtesy)
@@ -146,13 +146,11 @@ namespace ACLS.Authoring
 
         private static string JsonSchemaFor(DialogueStateType type) => type switch
         {
-            DialogueStateType.WorldBuild =>
-                "返回严格 JSON，顶层字段：l4_world{era_name, macro_factions:[{name,status}], history_anchors:[], summary}，" +
-                "l3_expanse{region, regional_powers:[{name,stance}], regional_tensions, summary}。" +
-                "不要 JSON 之外的文字（含 ``` 围栏）。",
+            DialogueStateType.WorldBuild => "",
 
             DialogueStateType.StageCreate =>
                 "返回严格 JSON，顶层字段：" +
+                "thinking（你的推理过程，原样输出，尽量先输出该字段），" +
                 "l1_stage{location, scene_description, active_npcs:[{name,role,relation_value,stance}], immediate_situation, exits:[]}，" +
                 "l2_arena{near_contacts:[{name,role,location,days_away}], active_pressures:[], opportunities:[]}。" +
                 "不要 JSON 之外的文字（含 ``` 围栏）。",
@@ -163,6 +161,7 @@ namespace ACLS.Authoring
             DialogueStateType.StagePlay =>
                 "每次回复严格使用 JSON：\n" +
                 "{\n" +
+                "  \"thinking\": \"<你的推理过程，原样输出，尽量先输出该字段>\",\n" +
                 "  \"narration\": \"<2-4 段中文叙事>\",\n" +
                 "  \"scene_participants\": [ {\"name\": \"...\", \"role\": \"...\"} ],\n" +
                 "  \"choices\": [\n" +

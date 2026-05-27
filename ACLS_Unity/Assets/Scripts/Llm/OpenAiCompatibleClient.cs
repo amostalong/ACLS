@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -67,8 +68,8 @@ namespace ACLS.Llm
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
             req.Content = new StringContent(json, Encoding.UTF8, "application/json");
 
-            using var resp = await http.SendAsync(req, ct).ConfigureAwait(true);
-            string respText = await resp.Content.ReadAsStringAsync().ConfigureAwait(true);
+            using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
+            string respText = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
 
             if (verbose) Debug.Log($"[OpenAI] ← {(int)resp.StatusCode} {respText}");
             LlmDebugLog.Add("OpenAI", json, respText);
@@ -96,6 +97,84 @@ namespace ACLS.Llm
             }
 
             return new LlmResponse { Content = content, Usage = usage };
+        }
+
+        public async Task<LlmResponse> CompleteStreamAsync(string systemPrompt,
+                                                           IReadOnlyList<ChatMessage> messages,
+                                                           System.Action<string> onTextDelta,
+                                                           CancellationToken ct)
+        {
+            var openAiMessages = new List<object> { new { role = "system", content = systemPrompt } };
+            if (messages != null)
+            {
+                openAiMessages.AddRange(messages.Select(m => new
+                {
+                    role = m.Role switch
+                    {
+                        ChatRole.Assistant => "assistant",
+                        ChatRole.System => "system",
+                        _ => "user",
+                    },
+                    content = m.Content,
+                }).Cast<object>());
+            }
+
+            var body = new
+            {
+                model = model,
+                max_tokens = maxTokens <= 0 ? 8192 : maxTokens,
+                messages = openAiMessages,
+                response_format = new { type = "json_object" },
+                stream = true,
+            };
+
+            string json = JsonConvert.SerializeObject(body);
+            if (verbose) Debug.Log($"[OpenAI] → {json}");
+
+            string url = baseUrl + "/v1/chat/completions";
+            using var req = new HttpRequestMessage(HttpMethod.Post, url);
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            req.Content = new StringContent(json, Encoding.UTF8, "application/json");
+
+            using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode)
+            {
+                string err = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+                if (verbose) Debug.Log($"[OpenAI] ← {(int)resp.StatusCode} {err}");
+                LlmDebugLog.Add("OpenAI", json, err);
+                throw new HttpRequestException($"OpenAI 兼容 {(int)resp.StatusCode}: {Truncate(err, 500)}");
+            }
+
+            using var stream = await resp.Content.ReadAsStreamAsync().ConfigureAwait(false);
+            using var reader = new StreamReader(stream);
+
+            var sb = new StringBuilder();
+            while (!reader.EndOfStream && !ct.IsCancellationRequested)
+            {
+                string line = await reader.ReadLineAsync().ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                if (!line.StartsWith("data:")) continue;
+
+                string data = line.Substring(5).Trim();
+                if (data == "[DONE]") break;
+
+                try
+                {
+                    var obj = JObject.Parse(data);
+                    var delta = (string)obj["choices"]?[0]?["delta"]?["content"];
+                    if (!string.IsNullOrEmpty(delta))
+                    {
+                        sb.Append(delta);
+                        onTextDelta?.Invoke(delta);
+                    }
+                }
+                catch (JsonException)
+                {
+                }
+            }
+
+            var usage = new LlmUsage();
+            return new LlmResponse { Content = sb.ToString(), Usage = usage };
         }
 
         private static string Truncate(string s, int max) =>

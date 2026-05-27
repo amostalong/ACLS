@@ -80,6 +80,7 @@ ACLS_Unity/Assets/Resources/LlmConfig.asset.meta
 
 # IDE
 .idea/
+.trae/
 
 # Locus package (local/private, not for version control)
 ACLS_Unity/Locus/

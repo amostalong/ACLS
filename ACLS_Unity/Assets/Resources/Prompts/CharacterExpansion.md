@@ -23,6 +23,7 @@
 
 ```json
 {
+  "thinking": "<你的推理过程，原样输出，尽量先输出该字段>",
   "family_background": "<2-3 句，描述父母、兄弟、家庭状况>",
   "social_circle": [
     {"name": "<人名>", "relation": "<与主角的关系>", "attitude_toward_player": "<态度>"}

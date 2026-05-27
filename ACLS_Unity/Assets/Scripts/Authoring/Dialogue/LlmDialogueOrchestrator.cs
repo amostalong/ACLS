@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using ACLS.Data;
 using ACLS.Llm;
 using ACLS.Sim;
+using Cysharp.Threading.Tasks;
 using UnityEngine;
 
 namespace ACLS.Authoring
@@ -43,12 +45,14 @@ namespace ACLS.Authoring
         public event Action<bool> OnBusyChanged;
         public event Action<string> OnError;                   // human-readable error
         public event Action<LlmUsage, LlmUsage> OnUsage;       // (last, cumulative)
+        public event Action<string> OnThinkingChanged;
 
         // ---- internal ----
         private CancellationTokenSource lifetimeCts;
         private CancellationTokenSource currentCts;
         private LlmUsage cumulativeUsage;
         private int callCount;
+        private string currentThinking = "";
 
         public LlmDialogueOrchestrator(World world, ILlmClient llm,
             LlmPromptConfig promptConfig)
@@ -125,7 +129,8 @@ namespace ACLS.Authoring
             currentCts = thisCts;
             try
             {
-                var resp = await LlmClient.CompleteAsync(prompt, new List<ChatMessage>(), thisCts.Token);
+                var resp = await CompleteStreamWithThinking(prompt,
+                    new List<ChatMessage> { new ChatMessage(ChatRole.User, "开始") }, thisCts.Token);
                 TrackUsage(resp.Usage);
 
                 var result = state.ParseResponse(resp.Content);
@@ -136,6 +141,7 @@ namespace ACLS.Authoring
                     return;
                 }
 
+                SetThinking(result.Thinking ?? "");
                 state.ApplyEffects(result);
                 onComplete?.Invoke(true);
             }
@@ -171,7 +177,8 @@ namespace ACLS.Authoring
             currentCts = thisCts;
             try
             {
-                var resp = await LlmClient.CompleteAsync(prompt, new List<ChatMessage>(), thisCts.Token);
+                var resp = await CompleteStreamWithThinking(prompt,
+                    new List<ChatMessage> { new ChatMessage(ChatRole.User, "开始") }, thisCts.Token);
                 TrackUsage(resp.Usage);
 
                 var result = state.ParseResponse(resp.Content);
@@ -194,8 +201,7 @@ namespace ACLS.Authoring
             }
         }
 
-        // 3. World build (one-shot, no history — called before character creation).
-        public async void StartWorldBuild(string worldDescription, Action<bool> onComplete)
+        public async void StartWorldBuild(string roleDescription, string worldDescription, Action<bool> onComplete)
         {
             if (Busy || LlmClient == null)
             {
@@ -203,7 +209,7 @@ namespace ACLS.Authoring
                 return;
             }
 
-            var state = new WorldBuildState(this, worldDescription);
+            var state = new WorldBuildState(this, roleDescription ?? "", worldDescription ?? "");
             string prompt = state.AssemblePrompt();
 
             SetBusy(true);
@@ -211,7 +217,8 @@ namespace ACLS.Authoring
             currentCts = thisCts;
             try
             {
-                var resp = await LlmClient.CompleteAsync(prompt, new List<ChatMessage>(), thisCts.Token);
+                var resp = await CompleteStreamWithThinking(prompt,
+                    new List<ChatMessage> { new ChatMessage(ChatRole.User, "开始") }, thisCts.Token);
                 TrackUsage(resp.Usage);
 
                 var result = state.ParseResponse(resp.Content);
@@ -222,6 +229,7 @@ namespace ACLS.Authoring
                     return;
                 }
 
+                SetThinking(result.Thinking ?? "");
                 state.ApplyEffects(result);
                 if (!string.IsNullOrWhiteSpace(result.Narration))
                 {
@@ -266,7 +274,8 @@ namespace ACLS.Authoring
             currentCts = thisCts;
             try
             {
-                var resp = await LlmClient.CompleteAsync(prompt, new List<ChatMessage>(), thisCts.Token);
+                var resp = await CompleteStreamWithThinking(prompt,
+                    new List<ChatMessage> { new ChatMessage(ChatRole.User, "开始") }, thisCts.Token);
                 TrackUsage(resp.Usage);
 
                 var result = state.ParseResponse(resp.Content);
@@ -277,6 +286,7 @@ namespace ACLS.Authoring
                     return;
                 }
 
+                SetThinking(result.Thinking ?? "");
                 state.ApplyEffects(result);
                 if (!string.IsNullOrWhiteSpace(result.Narration))
                 {
@@ -320,7 +330,7 @@ namespace ACLS.Authoring
             currentCts = thisCts;
             try
             {
-                var resp = await LlmClient.CompleteAsync(prompt, History.Recent(RecentMessages), thisCts.Token);
+                var resp = await CompleteStreamWithThinking(prompt, History.Recent(RecentMessages), thisCts.Token);
                 TrackUsage(resp.Usage);
 
                 var result = CurrentState.ParseResponse(resp.Content);
@@ -345,6 +355,97 @@ namespace ACLS.Authoring
 
         // ---- internal ----
 
+        private void SetThinking(string thinking)
+        {
+            currentThinking = thinking ?? "";
+            if (PlayerLoopHelper.IsMainThread)
+                OnThinkingChanged?.Invoke(currentThinking);
+            else
+                UniTask.Post(() => OnThinkingChanged?.Invoke(currentThinking));
+        }
+
+        private static IReadOnlyList<ChatMessage> EnsureMessages(IReadOnlyList<ChatMessage> messages)
+        {
+            if (messages == null || messages.Count == 0)
+                return new List<ChatMessage> { new ChatMessage(ChatRole.User, "开始") };
+            return messages;
+        }
+
+        private async Task<LlmResponse> CompleteStreamWithThinking(string prompt,
+            IReadOnlyList<ChatMessage> messages, CancellationToken ct)
+        {
+            SetThinking("");
+
+            var raw = new StringBuilder();
+            string last = "";
+            int lastEmit = Environment.TickCount;
+
+            messages = EnsureMessages(messages);
+
+            var resp = await LlmClient.CompleteStreamAsync(prompt, messages, delta =>
+            {
+                if (string.IsNullOrEmpty(delta)) return;
+                raw.Append(delta);
+                if (TryExtractThinking(raw, out var t) && t != last)
+                {
+                    last = t;
+                    int now = Environment.TickCount;
+                    if (now - lastEmit >= 50)
+                    {
+                        lastEmit = now;
+                        SetThinking(t);
+                    }
+                }
+            }, ct);
+
+            return resp;
+        }
+
+        private static bool TryExtractThinking(StringBuilder raw, out string thinking)
+        {
+            thinking = "";
+            if (raw == null || raw.Length == 0) return false;
+
+            string s = raw.ToString();
+            int key = s.IndexOf("\"thinking\"", StringComparison.Ordinal);
+            if (key < 0) return false;
+
+            int i = key + "\"thinking\"".Length;
+            while (i < s.Length && s[i] != ':') i++;
+            if (i >= s.Length) return false;
+            i++;
+            while (i < s.Length && char.IsWhiteSpace(s[i])) i++;
+            if (i >= s.Length || s[i] != '"') return false;
+            i++;
+
+            var sb = new StringBuilder();
+            bool esc = false;
+            for (; i < s.Length; i++)
+            {
+                char c = s[i];
+                if (esc)
+                {
+                    sb.Append(c switch
+                    {
+                        'n' => '\n',
+                        'r' => '\r',
+                        't' => '\t',
+                        '"' => '"',
+                        '\\' => '\\',
+                        _ => c,
+                    });
+                    esc = false;
+                    continue;
+                }
+                if (c == '\\') { esc = true; continue; }
+                if (c == '"') { thinking = sb.ToString(); return true; }
+                sb.Append(c);
+            }
+
+            thinking = sb.ToString();
+            return true;
+        }
+
         private void HandleResult(DialogueState state, DialogueResult result)
         {
             if (result.IsError)
@@ -357,6 +458,7 @@ namespace ACLS.Authoring
             state.ApplyEffects(result);
 
             // 2. Publish user-facing content.
+            SetThinking(result.Thinking ?? "");
             if (!string.IsNullOrWhiteSpace(result.Narration))
             {
                 History.Add(new ChatMessage(ChatRole.Assistant, result.Narration));

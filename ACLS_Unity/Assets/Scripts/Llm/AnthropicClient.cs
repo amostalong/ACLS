@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Text;
@@ -66,8 +67,8 @@ namespace ACLS.Llm
             req.Headers.Add("anthropic-version", ApiVersion);
             req.Content = new StringContent(json, Encoding.UTF8, "application/json");
 
-            using var resp = await http.SendAsync(req, ct).ConfigureAwait(true);
-            string respText = await resp.Content.ReadAsStringAsync().ConfigureAwait(true);
+            using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
+            string respText = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
 
             if (verbose) Debug.Log($"[Anthropic] ← {(int)resp.StatusCode} {respText}");
             LlmDebugLog.Add("Anthropic", json, respText);
@@ -98,6 +99,81 @@ namespace ACLS.Llm
                 usage.OutputTokens = (int?)usageObj["output_tokens"] ?? 0;
             }
 
+            return new LlmResponse { Content = sb.ToString(), Usage = usage };
+        }
+
+        public async Task<LlmResponse> CompleteStreamAsync(string systemPrompt,
+                                                           IReadOnlyList<ChatMessage> messages,
+                                                           System.Action<string> onTextDelta,
+                                                           CancellationToken ct)
+        {
+            var body = new
+            {
+                model = model,
+                max_tokens = maxTokens <= 0 ? 8192 : maxTokens,
+                system = systemPrompt,
+                messages = messages.Select(m => new
+                {
+                    role = m.Role == ChatRole.Assistant ? "assistant" : "user",
+                    content = m.Content,
+                }).ToArray(),
+                stream = true,
+            };
+
+            string json = JsonConvert.SerializeObject(body);
+            if (verbose) Debug.Log($"[Anthropic] → endPoint {endpoint}");
+            if (verbose) Debug.Log($"[Anthropic] → ApiVersion {ApiVersion}");
+            if (verbose) Debug.Log($"[Anthropic] → {json}");
+
+            using var req = new HttpRequestMessage(HttpMethod.Post, endpoint);
+            req.Headers.TryAddWithoutValidation("Authorization", $"Bearer {apiKey}");
+            req.Headers.Add("anthropic-version", ApiVersion);
+            req.Content = new StringContent(json, Encoding.UTF8, "application/json");
+
+            using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode)
+            {
+                string err = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+                if (verbose) Debug.Log($"[Anthropic] ← {(int)resp.StatusCode} {err}");
+                LlmDebugLog.Add("Anthropic", json, err);
+                throw new HttpRequestException($"Anthropic {(int)resp.StatusCode}: {Truncate(err, 500)}");
+            }
+
+            using var stream = await resp.Content.ReadAsStreamAsync().ConfigureAwait(false);
+            using var reader = new StreamReader(stream);
+
+            var sb = new StringBuilder();
+            while (!reader.EndOfStream && !ct.IsCancellationRequested)
+            {
+                string line = await reader.ReadLineAsync().ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                if (!line.StartsWith("data:")) continue;
+
+                string data = line.Substring(5).Trim();
+                if (string.IsNullOrWhiteSpace(data)) continue;
+
+                try
+                {
+                    var obj = JObject.Parse(data);
+                    string type = (string)obj["type"] ?? "";
+                    string delta = type switch
+                    {
+                        "content_block_start" => (string)obj["content_block"]?["text"],
+                        "content_block_delta" => (string)obj["delta"]?["text"],
+                        _ => null,
+                    };
+                    if (!string.IsNullOrEmpty(delta))
+                    {
+                        sb.Append(delta);
+                        onTextDelta?.Invoke(delta);
+                    }
+                }
+                catch (JsonException)
+                {
+                }
+            }
+
+            var usage = new LlmUsage();
             return new LlmResponse { Content = sb.ToString(), Usage = usage };
         }
 

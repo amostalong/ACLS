@@ -200,7 +200,7 @@ namespace ACLS.UI
             SetVisible(false);
 
             // Fire world build, then hand off to character creation via callback.
-            chat.StartWorldBuild(desc, success =>
+            chat.StartWorldBuild("", desc, success =>
             {
                 if (!success && errorText != null)
                     errorText.text = "※ 世界构建失败，将以默认设置继续";

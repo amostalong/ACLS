@@ -33,6 +33,7 @@ namespace ACLS.Authoring
 
         public IReadOnlyList<LlmReply.Choice> CurrentChoices => currentChoices;
         public IReadOnlyList<LlmReply.Participant> CurrentParticipants => currentParticipants;
+        public string CurrentThinking { get; private set; } = "";
 
         public LlmUsage LastUsage { get; private set; }
         public LlmUsage CumulativeUsage { get; private set; }
@@ -43,6 +44,7 @@ namespace ACLS.Authoring
         public event Action<IReadOnlyList<LlmReply.Choice>> OnChoicesChanged;
         public event Action<IReadOnlyList<LlmReply.Participant>> OnParticipantsChanged;
         public event Action<LlmUsage, LlmUsage> OnUsageReported;   // (lastCall, cumulative)
+        public event Action<string> OnThinkingChanged;
 
         private World world;
         private ILlmClient llm;
@@ -99,6 +101,12 @@ namespace ACLS.Authoring
 
             orchestrator.OnBusyChanged += busy => OnBusyChanged?.Invoke(busy);
 
+            orchestrator.OnThinkingChanged += thinking =>
+            {
+                CurrentThinking = thinking ?? "";
+                OnThinkingChanged?.Invoke(CurrentThinking);
+            };
+
             orchestrator.OnError += error =>
             {
                 var msg = new ChatMessage(ChatRole.System, "[错误] " + error);
@@ -151,11 +159,14 @@ namespace ACLS.Authoring
             orchestrator?.SendAction(action, displayText: action);
         }
 
-        // Called once before character creation to let the LLM build L4+L3 world context.
-        public void StartWorldBuild(string worldDescription, Action<bool> onComplete)
+        public void StartWorldBuild(string roleDescription, string worldDescription, Action<bool> onComplete)
         {
             if (!Ready) { onComplete?.Invoke(false); return; }
-            orchestrator?.StartWorldBuild(worldDescription ?? "", onComplete);
+            orchestrator?.StartWorldBuild(roleDescription ?? "", worldDescription ?? "", success =>
+            {
+                if (success) orchestrator?.TransitionTo(DialogueStateType.StagePlay);
+                onComplete?.Invoke(success);
+            });
         }
 
         // Called once after character expansion to generate L1_Stage + L2_Arena.
@@ -178,7 +189,7 @@ namespace ACLS.Authoring
                 onComplete?.Invoke(false);
                 return;
             }
-            if (PromptConfig == null || string.IsNullOrWhiteSpace(PromptConfig.CharacterExpansionPrompt))
+            if (PromptConfig == null || string.IsNullOrWhiteSpace(PromptConfig.WorldCreatePrompt))
             {
                 onComplete?.Invoke(false);
                 return;

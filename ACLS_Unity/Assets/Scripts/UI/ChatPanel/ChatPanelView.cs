@@ -17,6 +17,8 @@ namespace ACLS.UI
         private RectTransform historyContent;
         private ScrollRect scroll;
         private TextMeshProUGUI statusLabel;
+        private TextMeshProUGUI thinkingLabel;
+        private ScrollRect thinkingScroll;
         private TMP_InputField input;
         private Button sendBtn;
         private Button cancelBtn;
@@ -29,11 +31,14 @@ namespace ACLS.UI
 
             BuildUi();
 
-            foreach (var m in bridge.History.All) AppendMessage(m);
+            if (bridge.History?.All != null)
+                foreach (var m in bridge.History.All)
+                    AppendMessage(m);
 
             bridge.OnMessage += AppendMessage;
             bridge.OnBusyChanged += OnBusyChanged;
             bridge.OnChoicesChanged += RefreshChoices;
+            bridge.OnThinkingChanged += UpdateThinking;
 
             if (!bridge.Ready)
             {
@@ -45,6 +50,7 @@ namespace ACLS.UI
 
             RefreshChoices(bridge.CurrentChoices);
             UpdateStatusLabel();
+            UpdateThinking(bridge.CurrentThinking);
         }
 
         private void OnDestroy()
@@ -54,6 +60,7 @@ namespace ACLS.UI
                 bridge.OnMessage -= AppendMessage;
                 bridge.OnBusyChanged -= OnBusyChanged;
                 bridge.OnChoicesChanged -= RefreshChoices;
+                bridge.OnThinkingChanged -= UpdateThinking;
             }
         }
 
@@ -75,20 +82,37 @@ namespace ACLS.UI
                 Vector2.zero, Vector2.one, new Color(0.10f, 0.10f, 0.14f, 0.92f));
             bg.transform.SetAsFirstSibling();
 
-            BuildHistory();
-            BuildStatusBar();
-            BuildChoicesRow();
-            BuildInputRow();
+            var left = new GameObject("Left", typeof(RectTransform));
+            left.transform.SetParent(transform, false);
+            var leftRt = (RectTransform)left.transform;
+            leftRt.anchorMin = new Vector2(0, 0);
+            leftRt.anchorMax = new Vector2(0.6f, 1);
+            leftRt.offsetMin = Vector2.zero;
+            leftRt.offsetMax = Vector2.zero;
+
+            var right = new GameObject("Thinking", typeof(RectTransform));
+            right.transform.SetParent(transform, false);
+            var rightRt = (RectTransform)right.transform;
+            rightRt.anchorMin = new Vector2(0.6f, 0);
+            rightRt.anchorMax = new Vector2(1, 1);
+            rightRt.offsetMin = Vector2.zero;
+            rightRt.offsetMax = Vector2.zero;
+
+            BuildHistory(left.transform);
+            BuildStatusBar(left.transform);
+            BuildChoicesRow(left.transform);
+            BuildInputRow(left.transform);
+            BuildThinking(right.transform);
         }
 
-        private void BuildHistory()
+        private void BuildHistory(Transform parent)
         {
             var scrollGo = new GameObject("History",
                 typeof(RectTransform),
                 typeof(CanvasRenderer),
                 typeof(Image),
                 typeof(ScrollRect));
-            scrollGo.transform.SetParent(transform, false);
+            scrollGo.transform.SetParent(parent, false);
             var scrollRt = (RectTransform)scrollGo.transform;
             scrollRt.anchorMin = new Vector2(0, 0);
             scrollRt.anchorMax = new Vector2(1, 1);
@@ -144,9 +168,9 @@ namespace ACLS.UI
             csf.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
         }
 
-        private void BuildStatusBar()
+        private void BuildStatusBar(Transform parent)
         {
-            statusLabel = UiKit.CreateText(transform, "Status", 14, TextAlignmentOptions.Left);
+            statusLabel = UiKit.CreateText(parent, "Status", 14, TextAlignmentOptions.Left);
             var rt = (RectTransform)statusLabel.transform;
             rt.anchorMin = new Vector2(0, 0);
             rt.anchorMax = new Vector2(1, 0);
@@ -156,12 +180,12 @@ namespace ACLS.UI
             statusLabel.color = new Color(0.7f, 0.7f, 0.78f, 1f);
         }
 
-        private void BuildChoicesRow()
+        private void BuildChoicesRow(Transform parent)
         {
             var rowGo = new GameObject("Choices",
                 typeof(RectTransform),
                 typeof(HorizontalLayoutGroup));
-            rowGo.transform.SetParent(transform, false);
+            rowGo.transform.SetParent(parent, false);
             choicesContainer = (RectTransform)rowGo.transform;
             choicesContainer.anchorMin = new Vector2(0, 0);
             choicesContainer.anchorMax = new Vector2(1, 0);
@@ -205,10 +229,10 @@ namespace ACLS.UI
             bridge.Choose(index);
         }
 
-        private void BuildInputRow()
+        private void BuildInputRow(Transform parent)
         {
             var rowGo = new GameObject("InputRow", typeof(RectTransform));
-            rowGo.transform.SetParent(transform, false);
+            rowGo.transform.SetParent(parent, false);
             var rowRt = (RectTransform)rowGo.transform;
             rowRt.anchorMin = new Vector2(0, 0);
             rowRt.anchorMax = new Vector2(1, 0);
@@ -239,6 +263,103 @@ namespace ACLS.UI
             cancelRt.sizeDelta = new Vector2(86, 0);
             cancelRt.anchoredPosition = new Vector2(0, 0);
             cancelBtn.gameObject.SetActive(false);
+        }
+
+        private void BuildThinking(Transform parent)
+        {
+            var bg = UiKit.CreatePanel(parent, "Bg",
+                Vector2.zero, Vector2.one, new Color(0.05f, 0.05f, 0.08f, 0.9f));
+            bg.transform.SetAsFirstSibling();
+
+            var title = UiKit.CreateText(parent, "Title", 14, TextAlignmentOptions.Left);
+            var titleRt = (RectTransform)title.transform;
+            titleRt.anchorMin = new Vector2(0, 1);
+            titleRt.anchorMax = new Vector2(1, 1);
+            titleRt.pivot = new Vector2(0.5f, 1);
+            titleRt.offsetMin = new Vector2(8, -StatusBarHeight);
+            titleRt.offsetMax = new Vector2(-8, 0);
+            title.color = new Color(0.7f, 0.7f, 0.78f, 1f);
+            title.text = "THINKING";
+
+            var scrollGo = new GameObject("ThinkingScroll",
+                typeof(RectTransform),
+                typeof(CanvasRenderer),
+                typeof(Image),
+                typeof(ScrollRect));
+            scrollGo.transform.SetParent(parent, false);
+            var scrollRt = (RectTransform)scrollGo.transform;
+            scrollRt.anchorMin = new Vector2(0, 0);
+            scrollRt.anchorMax = new Vector2(1, 1);
+            scrollRt.offsetMin = new Vector2(8, 8);
+            scrollRt.offsetMax = new Vector2(-8, -StatusBarHeight - 8);
+            scrollGo.GetComponent<Image>().color = new Color(1, 1, 1, 0.01f);
+
+            thinkingScroll = scrollGo.GetComponent<ScrollRect>();
+            thinkingScroll.horizontal = false;
+            thinkingScroll.vertical = true;
+            thinkingScroll.movementType = ScrollRect.MovementType.Clamped;
+            thinkingScroll.scrollSensitivity = 30f;
+
+            var vpGo = new GameObject("Viewport",
+                typeof(RectTransform),
+                typeof(CanvasRenderer),
+                typeof(Image),
+                typeof(Mask));
+            vpGo.transform.SetParent(scrollGo.transform, false);
+            var vpRt = (RectTransform)vpGo.transform;
+            vpRt.anchorMin = Vector2.zero;
+            vpRt.anchorMax = Vector2.one;
+            vpRt.offsetMin = new Vector2(8, 8);
+            vpRt.offsetMax = new Vector2(-8, -8);
+            vpGo.GetComponent<Image>().color = new Color(1, 1, 1, 0.01f);
+            vpGo.GetComponent<Mask>().showMaskGraphic = false;
+            thinkingScroll.viewport = vpRt;
+
+            var contentGo = new GameObject("Content",
+                typeof(RectTransform),
+                typeof(VerticalLayoutGroup),
+                typeof(ContentSizeFitter));
+            contentGo.transform.SetParent(vpGo.transform, false);
+            var contentRt = (RectTransform)contentGo.transform;
+            contentRt.anchorMin = new Vector2(0, 1);
+            contentRt.anchorMax = new Vector2(1, 1);
+            contentRt.pivot = new Vector2(0.5f, 1);
+            contentRt.anchoredPosition = Vector2.zero;
+            contentRt.sizeDelta = new Vector2(0, 0);
+            thinkingScroll.content = contentRt;
+
+            var vlg = contentGo.GetComponent<VerticalLayoutGroup>();
+            vlg.spacing = 10;
+            vlg.padding = new RectOffset(8, 8, 8, 8);
+            vlg.childAlignment = TextAnchor.UpperLeft;
+            vlg.childControlWidth = true;
+            vlg.childControlHeight = true;
+            vlg.childForceExpandWidth = true;
+            vlg.childForceExpandHeight = false;
+
+            var csf = contentGo.GetComponent<ContentSizeFitter>();
+            csf.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+            csf.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            var textGo = new GameObject("Text",
+                typeof(RectTransform),
+                typeof(CanvasRenderer),
+                typeof(TextMeshProUGUI),
+                typeof(ContentSizeFitter));
+            textGo.transform.SetParent(contentGo.transform, false);
+            thinkingLabel = textGo.GetComponent<TextMeshProUGUI>();
+            thinkingLabel.font = UiKit.TmpFont;
+            thinkingLabel.fontSize = 14;
+            thinkingLabel.color = new Color(0.9f, 0.9f, 0.95f, 1f);
+            thinkingLabel.alignment = TextAlignmentOptions.TopLeft;
+            thinkingLabel.richText = false;
+            thinkingLabel.enableWordWrapping = true;
+            thinkingLabel.overflowMode = TextOverflowModes.Overflow;
+            thinkingLabel.text = "";
+
+            var textCsf = textGo.GetComponent<ContentSizeFitter>();
+            textCsf.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+            textCsf.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
         }
 
         // -------- behavior --------
@@ -336,6 +457,26 @@ namespace ACLS.UI
             statusLabel.text = n > 0
                 ? $"<color=#7c7c8a>请选择行动（{n} 项）</color>"
                 : "<color=#7c7c8a>就绪</color>";
+        }
+
+        private void UpdateThinking(string text)
+        {
+            if (thinkingLabel == null) return;
+            thinkingLabel.text = Escape(text);
+            ScrollThinkingToBottom();
+        }
+
+        private void ScrollThinkingToBottom()
+        {
+            if (thinkingScroll == null) return;
+            StartCoroutine(ScrollThinkingNextFrame());
+        }
+
+        private System.Collections.IEnumerator ScrollThinkingNextFrame()
+        {
+            yield return null;
+            Canvas.ForceUpdateCanvases();
+            thinkingScroll.verticalNormalizedPosition = 0f;
         }
 
         private void ScrollToBottom()
