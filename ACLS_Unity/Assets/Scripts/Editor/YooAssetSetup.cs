@@ -14,7 +14,7 @@ namespace ACLS.Editor
     /// 使用方式：Unity 菜单 → ACLS → YooAsset → 初始化资源配置
     ///
     /// 配置说明：
-    /// - 包（Package）: DefaultPackage — 游戏默认资源包
+    /// - 包（Package）: Dev — 游戏默认资源包
     /// - 分组（Group）:
     ///   - art_bg       → 背景图（Tag: bg, 按文件夹打包）
     ///   - art_ui       → UI Sprite（Tag: ui, 按文件夹打包）
@@ -31,7 +31,7 @@ namespace ACLS.Editor
     public static class YooAssetSetup
     {
         private const string ContentRoot = "Assets/Content";
-        private const string DefaultPackageName = "DefaultPackage";
+        private static string DefaultPackageName => ACLS.Authoring.YooAssetBootstrapper.DefaultPackageName;
 
         [MenuItem("ACLS/YooAsset/初始化资源配置")]
         public static void InitializeConfiguration()
@@ -78,7 +78,7 @@ namespace ACLS.Editor
                 Debug.Log("[YooAssetSetup] 必需资源齐全。");
         }
 
-        [MenuItem("ACLS/YooAsset/构建 DefaultPackage（当前平台）")]
+        [MenuItem("ACLS/YooAsset/构建 Dev（当前平台）")]
         public static void BuildDefaultPackageForActiveTarget()
         {
             BuildForChannel(DefaultPackageName, EditorUserBuildSettings.activeBuildTarget);
@@ -138,7 +138,7 @@ namespace ACLS.Editor
             EditorUtility.SetDirty(setting);
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
-            Debug.Log("[YooAssetSetup] 已创建 DefaultPackage 的 Collector 配置：Assets/BundleCollectorSetting.asset");
+            Debug.Log($"[YooAssetSetup] 已创建 {DefaultPackageName} 的 Collector 配置：Assets/BundleCollectorSetting.asset");
         }
 
         private static BundleCollectorGroup CreateGroup(string groupName, string tags, BundleCollector collector)

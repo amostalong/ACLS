@@ -1,5 +1,4 @@
 using System;
-using System.Threading.Tasks;
 using Cysharp.Threading.Tasks;
 using UnityEngine;
 using YooAsset;
@@ -23,7 +22,7 @@ namespace ACLS.Authoring
             EditorSimulate = 2,
         }
 
-        public const string DefaultPackageName = "Dev";
+        public const string DefaultPackageName = "DefaultPackage";
 
         private static ResourcePackage _defaultPackage;
         private static string _remoteServicesUrl;
@@ -37,7 +36,7 @@ namespace ACLS.Authoring
             get
             {
                 if (_defaultPackage == null)
-                    Debug.LogError("[YooAsset] DefaultPackage 尚未初始化。请先调用 InitializeAsync()。");
+                    Debug.LogError($"[YooAsset] 默认包（{DefaultPackageName}）尚未初始化。请先调用 InitializeAsync()。");
                 return _defaultPackage;
             }
         }
@@ -46,7 +45,7 @@ namespace ACLS.Authoring
         /// 初始化 YooAsset 资源系统。
         /// 使用 OfflinePlayMode：所有资源来自本地 StreamingAssets，无远程下载。
         /// </summary>
-        public static async UniTask InitializeAsync(InitializePlayMode playMode = InitializePlayMode.Auto)
+        public static async UniTask InitializeAsync(InitializePlayMode playMode = InitializePlayMode.Auto, string packageVersion = null)
         {
             if (IsInitialized)
             {
@@ -68,17 +67,22 @@ namespace ACLS.Authoring
                 return;
             }
 
-            IsInitialized = true;
-            Debug.Log($"[YooAsset] 初始化完成（{_defaultPackage.InitializeStatus})");
+            ok = await EnsureManifestLoadedAsync(_defaultPackage, packageVersion, appendTimeTicks: false);
+            if (!ok)
+            {
+                Debug.LogError("[YooAsset] 加载清单失败。");
+                return;
+            }
 
-            await _defaultPackage.LoadPackageManifestAsync(new LoadPackageManifestOptions(DefaultPackageName, 0));
+            IsInitialized = true;
+            Debug.Log($"[YooAsset] 初始化完成（{playMode}）");
         }
 
         /// <summary>
         /// 运行时切换到联机模式（用于热更/DLC 场景）。
         /// 调用前需将补丁包部署到 CDN，并配置 HostPlayModeParameters 的远程服务 URL。
         /// </summary>
-        public static async UniTask SwitchToHostMode(string remoteServicesUrl)
+        public static async UniTask SwitchToHostMode(string remoteServicesUrl, string packageVersion = null)
         {
             if (_defaultPackage == null)
             {
@@ -86,9 +90,11 @@ namespace ACLS.Authoring
                 return;
             }
 
+            IsInitialized = false;
             YooAssets.RemovePackage(DefaultPackageName);
 
             _defaultPackage = YooAssets.CreatePackage(DefaultPackageName);
+            
             _remoteServicesUrl = remoteServicesUrl;
             var remoteService = new RemoteService(remoteServicesUrl);
             var initOptions = new HostPlayModeOptions
@@ -104,6 +110,14 @@ namespace ACLS.Authoring
                 return;
             }
 
+            ok = await EnsureManifestLoadedAsync(_defaultPackage, packageVersion, appendTimeTicks: true);
+            if (!ok)
+            {
+                Debug.LogError("[YooAsset] 切换联机模式失败：加载清单失败。");
+                return;
+            }
+
+            IsInitialized = true;
             Debug.Log($"[YooAsset] 已切换到联机模式，远程服务：{remoteServicesUrl}");
         }
 
@@ -114,10 +128,10 @@ namespace ACLS.Authoring
         public static async UniTask<ResourcePackage> GetOrCreatePackageAsync(
             string packageName,
             bool isRemote = false,
-            InitializePlayMode playMode = InitializePlayMode.Auto)
+            InitializePlayMode playMode = InitializePlayMode.Auto,
+            string packageVersion = null)
         {
-            var pkg = YooAssets.GetPackage(packageName);
-            if (pkg != null)
+            if (YooAssets.TryGetPackage(packageName, out var pkg))
                 return pkg;
 
             pkg = YooAssets.CreatePackage(packageName);
@@ -137,12 +151,18 @@ namespace ACLS.Authoring
                     CacheFileSystemParameters = FileSystemParameters.CreateDefaultSandboxFileSystemParameters(remoteService),
                 };
                 var op = pkg.InitializePackageAsync(hostOptions);
-                await AwaitOperationSucceed(op);
+                if (!await AwaitOperationSucceed(op))
+                    return pkg;
+
+                await EnsureManifestLoadedAsync(pkg, packageVersion, appendTimeTicks: true);
             }
             else
             {
                 var op = pkg.InitializePackageAsync(CreateInitializeOptions(packageName, playMode));
-                await AwaitOperationSucceed(op);
+                if (!await AwaitOperationSucceed(op))
+                    return pkg;
+
+                await EnsureManifestLoadedAsync(pkg, packageVersion, appendTimeTicks: false);
             }
 
             return pkg;
@@ -165,9 +185,13 @@ namespace ACLS.Authoring
             {
 #if UNITY_EDITOR
                 var result = EditorSimulateBuildInvoker.Build(packageName, (int)EBundleType.VirtualAssetBundle);
+                var editorFileSystemParameters =
+                    FileSystemParameters.CreateDefaultEditorFileSystemParameters(result.PackageRootDirectory);
+                
                 return new EditorSimulateModeOptions
                 {
-                    EditorFileSystemParameters = FileSystemParameters.CreateDefaultEditorFileSystemParameters(result.PackageRootDirectory),
+                    EditorFileSystemParameters = editorFileSystemParameters,
+                    
                 };
 #else
                 throw new PlatformNotSupportedException("EditorSimulate 模式仅支持在 Unity Editor 下运行。");
@@ -186,9 +210,40 @@ namespace ACLS.Authoring
                 return false;
 
             while (!operation.IsDone)
-                await Task.Yield();
+                await UniTask.Yield();
 
             return operation.Status == EOperationStatus.Succeeded;
+        }
+
+        private static async UniTask<bool> EnsureManifestLoadedAsync(
+            ResourcePackage package,
+            string packageVersion,
+            bool appendTimeTicks,
+            int timeout = 60)
+        {
+            if (package == null)
+                return false;
+
+            string version = packageVersion;
+            if (string.IsNullOrWhiteSpace(version))
+            {
+                var requestOp = package.RequestPackageVersionAsync(new RequestPackageVersionOptions(appendTimeTicks, timeout));
+                if (!await AwaitOperationSucceed(requestOp))
+                {
+                    Debug.LogError($"[YooAsset] 请求版本失败：{GetError(requestOp)}");
+                    return false;
+                }
+                version = requestOp.PackageVersion;
+            }
+
+            var loadOp = package.LoadPackageManifestAsync(new LoadPackageManifestOptions(version, timeout));
+            if (!await AwaitOperationSucceed(loadOp))
+            {
+                Debug.LogError($"[YooAsset] 加载清单失败：{GetError(loadOp)}");
+                return false;
+            }
+
+            return true;
         }
 
         private static string GetError(AsyncOperationBase operation)

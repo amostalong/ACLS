@@ -77,7 +77,7 @@ namespace ACLS.Authoring
         {
             var cfg = ContentLoader.LoadSync<LlmConfig>("Assets/Content/Config/LlmConfig.asset", "LlmConfig");
             if (cfg == null)
-                return (null, "未找到 Assets/Content/Config/LlmConfig.asset。请创建（Create → ACLS → LLM Config）并添加至少一个 Profile；若在 Player 中运行，请先构建 YooAsset DefaultPackage 并随包发布。");
+                return (null, $"未找到 Assets/Content/Config/LlmConfig.asset。请创建（Create → ACLS → LLM Config）并添加至少一个 Profile；若在 Player 中运行，请先构建 YooAsset 默认包（{YooAssetBootstrapper.DefaultPackageName}）并随包发布。");
             if (cfg.Profiles == null || cfg.Profiles.Count == 0)
                 return (null, "LlmConfig 里没有任何 Profile。请在 Inspector 里点「＋ Add Profile」并勾选「激活」。");
             if (cfg.Active == null)
