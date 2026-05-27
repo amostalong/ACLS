@@ -15,6 +15,24 @@ The full design + phase plan lives at `C:/Users/dd/.claude/plans/snuggly-jinglin
 - **Target platform:** Standalone Desktop. No XR/VR plugin currently configured (the `com.unity.modules.xr/vr` modules are baseline Unity, not active runtime).
 - **C# version:** Unity 2022.3 ships C# 9 — switch expressions, target-typed `new`, init-only setters all available.
 
+## Resource management (YooAsset)
+
+**Decision**: We use [YooAsset](https://github.com/tuyoogame/YooAsset) (v2.x, UPM package `com.tuyoogame.yooasset`) as the resource management framework. Addressables was considered and rejected — it's designed for mobile remote-catalog workflows, which our standalone desktop game does not need. YooAsset gives us the key features we *do* need (reference-counted loading/unloading, dependency resolution, async/sync API, multi-platform builds, multi-channel via Package+Tag) without the CDN/Catalog/Variant overhead.
+
+Key integration points:
+
+- **`YooAssetBootstrapper`** (`Authoring/`) — initializes YooAsset at game startup. Currently in `OfflinePlayMode` (all assets from local StreamingAssets). Call `SwitchToHostMode()` when Steam DLC / CDN hot-update is needed.
+- **`AssetHandle<T>`** (`Authoring/`) — lightweight wrapper with `LoadAsync` / `LoadSync` / `Dispose`. Use this for loading Texture2D, AudioClip, Sprite, etc. from YooAsset.
+- **Small config files** (LlmConfig, LlmPromptConfig, Prompts/*.md, fonts) still use `Resources.Load` — they are tiny, loaded once at boot, and not worth the overhead of AB packaging. This is a pragmatic compromise, not an endorsement of Resources.Load for general use.
+- **Editor configuration**: open `YooAsset → AssetBundle Collector` to set up Package/Group/Tag. The `ACLS/YooAsset/初始化资源配置` menu item creates the recommended folder structure.
+- **Package structure** (planned):
+  - `DefaultPackage` — core game assets (bg, ui, audio, fonts). Split into Groups by tag.
+  - `SteamPackage` — (future) Steam-exclusive content.
+  - `DemoPackage` — (future) demo subset.
+  - `QAPackage` — (future) debug tooling assets.
+
+Current asset loading flow: `Resources.Load` → (phase 2) gradually migrate to `AssetHandle<T>` with YooAsset.
+
 ## Architecture overview
 
 Single runtime asmdef (`ACLS.Runtime`) and editor asmdef (`ACLS.Editor`) under `Assets/Scripts/`. **Do not split further** until Phase 3 — see plan file for rationale.

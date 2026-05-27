@@ -2,7 +2,9 @@
     "name": "ACLS.Editor",
     "rootNamespace": "ACLS.Editor",
     "references": [
-        "ACLS.Runtime"
+        "ACLS.Runtime",
+        "YooAsset",
+        "YooAsset.Editor"
     ],
     "includePlatforms": [
         "Editor"

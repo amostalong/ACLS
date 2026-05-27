@@ -2,6 +2,7 @@ using UnityEngine;
 using ACLS.Data;
 using ACLS.Llm;
 using ACLS.Sim;
+using Cysharp.Threading.Tasks;
 
 namespace ACLS.Authoring
 {
@@ -24,51 +25,59 @@ namespace ACLS.Authoring
             go.AddComponent<GameBootstrap>();
         }
 
+        private bool _booted;
+
         private void Awake()
         {
-            // Localization (placeholder strings inlined from WorldFactory)
+            BootAsync().Forget();
+        }
+
+        private async UniTaskVoid BootAsync()
+        {
+            if (_booted) return;
+            _booted = true;
+
+            await YooAssetBootstrapper.InitializeAsync();
+
             WorldFactory.RegisterPlaceholderLocalization();
 
-            // Content registry (placeholder traits + events constructed in code)
             Registry.Clear();
             foreach (var t in WorldFactory.BuildPlaceholderTraits()) Registry.Register(t);
             foreach (var e in WorldFactory.BuildPlaceholderEvents()) Registry.Register(e);
 
-            // Sim
             world = WorldFactory.BuildPlaceholderWorld();
 
-            // Driver
             clock = gameObject.AddComponent<GameClockDriver>();
             clock.Bind(world);
 
-            // Dispatcher
             dispatcher = gameObject.AddComponent<EventDispatcher>();
             dispatcher.Bind(world);
 
-            // LLM client + chat bridge
             chat = gameObject.AddComponent<ChatBridge>();
             var (llm, configError) = TryCreateLlmClient();
-            var promptConfig = Resources.Load<LlmPromptConfig>("LlmPromptConfig") ?? CreateDefaultPromptConfig();
+            var promptConfig = ContentLoader.LoadSync<LlmPromptConfig>("Assets/Content/Config/LlmPromptConfig.asset", "LlmPromptConfig")
+                ?? CreateDefaultPromptConfig();
             chat.Bind(world, llm, promptConfig, configError);
 
-            // State machine drives prompt selection and skill routing.
             var promptSelector = new PromptSelector(promptConfig);
             stateMachine = new GameStateMachine(world, chat, promptSelector);
             chat.StateMachine = stateMachine;
 
-            // UI — WorldSelectionView is shown first on new game; it hands off
-            // to CharacterCreationView once the LLM has built the world.
             UiBuilder.Build(world, clock, chat, stateMachine);
             stateMachine.TransitionTo(GameState.WorldSelection);
 
             world.Paused = true;
         }
 
+        /// <summary>
+        /// 异步初始化 YooAsset 资源系统。
+        /// 从 Awake 触发，不阻塞同步启动流程。
+        /// </summary>
         private static (ILlmClient client, string error) TryCreateLlmClient()
         {
-            var cfg = Resources.Load<LlmConfig>("LlmConfig");
+            var cfg = ContentLoader.LoadSync<LlmConfig>("Assets/Content/Config/LlmConfig.asset", "LlmConfig");
             if (cfg == null)
-                return (null, "未找到 Assets/Resources/LlmConfig.asset。请创建（Create → ACLS → LLM Config）并添加至少一个 Profile。");
+                return (null, "未找到 Assets/Content/Config/LlmConfig.asset。请创建（Create → ACLS → LLM Config）并添加至少一个 Profile；若在 Player 中运行，请先构建 YooAsset DefaultPackage 并随包发布。");
             if (cfg.Profiles == null || cfg.Profiles.Count == 0)
                 return (null, "LlmConfig 里没有任何 Profile。请在 Inspector 里点「＋ Add Profile」并勾选「激活」。");
             if (cfg.Active == null)
@@ -98,8 +107,8 @@ namespace ACLS.Authoring
         {
             var cfg = ScriptableObject.CreateInstance<LlmPromptConfig>();
 
-            var sysMd = Resources.Load<TextAsset>("Prompts/SystemPrompt");
-            var expMd = Resources.Load<TextAsset>("Prompts/CharacterExpansion");
+            var sysMd = ContentLoader.LoadSync<TextAsset>("Assets/Content/Prompts/SysPrompt.md", "Prompts/SysPrompt");
+            var expMd = ContentLoader.LoadSync<TextAsset>("Assets/Content/Prompts/CharacterExpansion.md", "Prompts/CharacterExpansion");
 
             cfg.SystemPromptMd = sysMd ?? CreateInlineTextAsset("SystemPrompt.md", BuiltInSystemPrompt());
             cfg.WorldCreatePromptMd = expMd ?? CreateInlineTextAsset("CharacterExpansion.md", BuiltInExpansionPrompt());

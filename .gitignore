@@ -82,6 +82,10 @@ ACLS_Unity/Assets/Resources/LlmConfig.asset.meta
 .idea/
 .trae/
 
+# YooAsset bundle output
+[Bb]undle/
+[Bb]undles/
+
 # Locus package (local/private, not for version control)
 ACLS_Unity/Locus/
 ACLS_Unity/Packages/com.farlocus.locus/

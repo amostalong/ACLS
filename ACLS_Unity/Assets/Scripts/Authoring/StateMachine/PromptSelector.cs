@@ -40,8 +40,9 @@ namespace ACLS.Authoring
         // if the fragment file is missing.
         public string GetFragment(PromptFragment fragment)
         {
-            string path = ResourcePathFor(fragment);
-            var asset = Resources.Load<TextAsset>(path);
+            string resourcesPath = ResourcePathFor(fragment);
+            string name = resourcesPath.StartsWith("Prompts/") ? resourcesPath.Substring("Prompts/".Length) : resourcesPath;
+            var asset = ContentLoader.LoadSync<TextAsset>($"Assets/Content/Prompts/{name}.md", resourcesPath);
             if (asset != null) return "\n\n" + asset.text;
 
             // Fallback: return built-in fragment text.

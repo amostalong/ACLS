@@ -3,7 +3,8 @@
     "rootNamespace": "ACLS",
     "references": [
         "UniTask",
-        "Unity.TextMeshPro"
+        "Unity.TextMeshPro",
+        "YooAsset"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

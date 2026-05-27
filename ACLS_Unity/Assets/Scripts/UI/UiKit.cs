@@ -2,6 +2,7 @@ using System;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
+using ACLS.Authoring;
 
 namespace ACLS.UI
 {
@@ -59,7 +60,7 @@ namespace ACLS.UI
 
         public static TMP_FontAsset ResolveFont(int sizeHint = 16)
         {
-            Font rawFont = Resources.Load<Font>("Fonts/LXGWWenKai-Regular");
+            Font rawFont = ContentLoader.LoadSync<Font>("Assets/Content/Fonts/LXGWWenKai-Regular.ttf", "Fonts/LXGWWenKai-Regular");
             if (rawFont == null)
             {
                 string[] candidates = {
@@ -71,7 +72,34 @@ namespace ACLS.UI
                 };
                 rawFont = Font.CreateDynamicFontFromOSFont(candidates, sizeHint);
             }
-            return TMP_FontAsset.CreateFontAsset(rawFont);
+            var mainAsset = TMP_FontAsset.CreateFontAsset(rawFont);
+
+            // Fallback font: symbol/emoji fonts to cover Dingbats (U+2700-27BF) and
+            // other Unicode blocks that CJK fonts don't include (geometric shapes,
+            // arrows, currency symbols, emoji, etc.).
+            var fallback = TryBuildFallbackFont();
+            if (fallback != null)
+            {
+                mainAsset.fallbackFontAssetTable = new System.Collections.Generic.List<TMP_FontAsset> { fallback };
+            }
+
+            return mainAsset;
+        }
+
+        private static TMP_FontAsset TryBuildFallbackFont(int sizeHint = 20)
+        {
+            string[] candidates =
+            {
+                "Segoe UI Symbol",      // Windows — broad Unicode coverage incl. Dingbats
+                "Segoe UI Emoji",       // Windows — emoji + symbols
+                "Apple Color Emoji",    // macOS/iOS — emoji + some symbols
+                "Apple Symbols",        // macOS — symbol fallback
+                "Noto Sans Symbols",    // Linux / cross-platform
+                "Arial Unicode MS",     // macOS / Office — very broad coverage
+            };
+            Font raw = Font.CreateDynamicFontFromOSFont(candidates, sizeHint);
+            if (raw == null) return null;
+            return TMP_FontAsset.CreateFontAsset(raw);
         }
     }
 }

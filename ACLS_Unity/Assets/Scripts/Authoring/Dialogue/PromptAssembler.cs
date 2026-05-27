@@ -184,7 +184,7 @@ namespace ACLS.Authoring
 
         private static string LoadFragment(string resourceName)
         {
-            var asset = Resources.Load<UnityEngine.TextAsset>("Prompts/" + resourceName);
+            var asset = ContentLoader.LoadSync<UnityEngine.TextAsset>($"Assets/Content/Prompts/{resourceName}.md", "Prompts/" + resourceName);
             return asset != null ? asset.text : "";
         }
 

@@ -164,7 +164,7 @@ namespace ACLS.UI
                     iRt.anchorMin = new Vector2(0, 1); iRt.anchorMax = new Vector2(1, 1);
                     iRt.pivot = new Vector2(0.5f, 1);
                     iRt.offsetMin = new Vector2(14, -34); iRt.offsetMax = new Vector2(-14, -10);
-                    icon.text = "✎  自定义角色";
+                    icon.text = "创建 自定义角色";
 
                     var desc = UiKit.CreateText(go.transform, "Desc", 14, TextAlignmentOptions.TopLeft);
                     desc.color = new Color(0.82f, 0.82f, 0.82f, 1f);

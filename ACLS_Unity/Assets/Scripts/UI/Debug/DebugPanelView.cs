@@ -166,7 +166,7 @@ namespace ACLS.UI
             nextRt.anchoredPosition = new Vector2(-108, 0);
 
             // ✕ Close (red-tinted)
-            var closeBtn = UiKit.CreateButton(bar.transform, "Close", "✕ 关闭", Toggle);
+            var closeBtn = UiKit.CreateButton(bar.transform, "Close", "× 关闭", Toggle);
             closeBtn.GetComponent<Image>().color = new Color(0.48f, 0.14f, 0.14f, 0.95f);
             var closeRt = (RectTransform)closeBtn.transform;
             closeRt.anchorMin = new Vector2(1, 0);
