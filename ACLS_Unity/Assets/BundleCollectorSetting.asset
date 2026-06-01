@@ -16,7 +16,7 @@ MonoBehaviour:
   ShowEditorAlias: 0
   UniqueBundleName: 0
   Packages:
-  - PackageName: Dev
+  - PackageName: DefaultPackage
     PackageDesc: DevPackage
     EnableAddressable: 0
     SupportExtensionless: 1

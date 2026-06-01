@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using ACLS.Logging;
 
 namespace ACLS.Llm
 {
@@ -55,6 +57,7 @@ namespace ACLS.Llm
             if (string.IsNullOrWhiteSpace(raw))
             {
                 error = "LLM 返回为空";
+                Log.Warn(Log.Channels.CharExpand, "❌ {0}", error);
                 return false;
             }
 
@@ -74,13 +77,14 @@ namespace ACLS.Llm
             if (openIdx < 0 || closeIdx <= openIdx)
             {
                 error = "未找到 JSON 对象";
+                Log.Warn(Log.Channels.CharExpand, "❌ {0}", error);
                 return false;
             }
             string json = text.Substring(openIdx, closeIdx - openIdx + 1);
 
             JObject obj;
             try { obj = JObject.Parse(json); }
-            catch (JsonException ex) { error = "JSON 解析失败：" + ex.Message; return false; }
+            catch (JsonException ex) { error = "JSON 解析失败：" + ex.Message; Log.Warn(Log.Channels.CharExpand, "❌ {0}", error); return false; }
 
             var result = new CharacterExpansionReply();
             result.Thinking = ((string)obj["thinking"] ?? "").Trim();
@@ -113,6 +117,26 @@ namespace ACLS.Llm
             }
 
             reply = result;
+
+            // 日志输出
+            var socialSummary = string.Join(", ", result.SocialCircle.Select(s => $"{s.Name}({s.Relation})"));
+            Log.Info(Log.Channels.CharExpand,
+                "✅ 成功解析角色拓展"
+                + " | 家族背景长度={0}"
+                + " | 社交圈={1}人 [{2}]"
+                + " | 近期目标={3} 秘密={4} 价值观={5}"
+                + " | 资产:关系={6} 知识={7} 物品={8}"
+                + " | raw长度={9}",
+                result.FamilyBackground.Length,
+                result.SocialCircle.Count, socialSummary,
+                !string.IsNullOrWhiteSpace(result.RecentGoal),
+                !string.IsNullOrWhiteSpace(result.Secret),
+                !string.IsNullOrWhiteSpace(result.Values),
+                result.StartingAssets.Connections.Count,
+                result.StartingAssets.Knowledge.Count,
+                result.StartingAssets.Items.Count,
+                raw.Length);
+
             return true;
         }
 

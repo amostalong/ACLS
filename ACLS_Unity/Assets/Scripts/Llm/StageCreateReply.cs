@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using ACLS.Logging;
 
 namespace ACLS.Llm
 {
@@ -44,7 +46,7 @@ namespace ACLS.Llm
             reply = null;
             error = null;
 
-            if (string.IsNullOrWhiteSpace(raw)) { error = "LLM 返回为空"; return false; }
+            if (string.IsNullOrWhiteSpace(raw)) { error = "LLM 返回为空"; Log.Warn(Log.Channels.Stage, "❌ {0}", error); return false; }
 
             string text = raw.Trim();
             if (text.StartsWith("```"))
@@ -133,9 +135,23 @@ namespace ACLS.Llm
             }
 
             if (string.IsNullOrWhiteSpace(result.L1Text))
-            { error = "l1_stage 字段缺失或为空"; return false; }
+            { error = "l1_stage 字段缺失或为空"; Log.Warn(Log.Channels.Stage, "❌ {0}", error); return false; }
 
             reply = result;
+
+            // 日志输出
+            var npcNames = string.Join(", ", result.ActiveNpcs.Select(n => $"{n.Name}({n.Role})"));
+            Log.Info(Log.Channels.Stage,
+                "✅ 成功解析舞台创建"
+                + " | L1长度={0} L2长度={1}"
+                + " | NPC数={2} [{3}]"
+                + " | 有场景描述={4}"
+                + " | raw长度={5}",
+                result.L1Text.Length, result.L2Text.Length,
+                result.ActiveNpcs.Count, npcNames,
+                !string.IsNullOrWhiteSpace(result.SceneDescription),
+                raw.Length);
+
             return true;
         }
     }

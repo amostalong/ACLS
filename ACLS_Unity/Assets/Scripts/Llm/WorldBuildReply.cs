@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Text;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using ACLS.Logging;
 
 namespace ACLS.Llm
 {
@@ -49,7 +50,7 @@ namespace ACLS.Llm
             reply = null;
             error = null;
 
-            if (string.IsNullOrWhiteSpace(raw)) { error = "LLM 返回为空"; return false; }
+            if (string.IsNullOrWhiteSpace(raw)) { error = "LLM 返回为空"; Log.Warn(Log.Channels.WorldBuild, "❌ {0}", error); return false; }
 
             string text = raw.Trim();
             if (text.StartsWith("```"))
@@ -63,11 +64,11 @@ namespace ACLS.Llm
 
             int open = text.IndexOf('{');
             int close = text.LastIndexOf('}');
-            if (open < 0 || close <= open) { error = "未找到 JSON 对象"; return false; }
+            if (open < 0 || close <= open) { error = "未找到 JSON 对象"; Log.Warn(Log.Channels.WorldBuild, "❌ {0}", error); return false; }
 
             JObject obj;
             try { obj = JObject.Parse(text.Substring(open, close - open + 1)); }
-            catch (JsonException ex) { error = "JSON 解析失败：" + ex.Message; return false; }
+            catch (JsonException ex) { error = "JSON 解析失败：" + ex.Message; Log.Warn(Log.Channels.WorldBuild, "❌ {0}", error); return false; }
 
             var result = new WorldBuildReply();
             result.Thinking = ((string)obj["thinking"] ?? "").Trim();
@@ -206,13 +207,39 @@ namespace ACLS.Llm
             }
 
             if (string.IsNullOrWhiteSpace(result.L4Text))
-            { error = "l4_world 字段缺失或为空"; return false; }
+            {
+                error = "l4_world 字段缺失或为空";
+                Log.Warn(Log.Channels.WorldBuild, "❌ {0}", error);
+                return false;
+            }
             if (string.IsNullOrWhiteSpace(result.L1Text))
-            { error = "l1_stage 字段缺失或为空"; return false; }
+            {
+                error = "l1_stage 字段缺失或为空";
+                Log.Warn(Log.Channels.WorldBuild, "❌ {0}", error);
+                return false;
+            }
             if (result.Player == null || string.IsNullOrWhiteSpace(result.Player.Name))
-            { error = "p0_player 字段缺失或为空"; return false; }
+            {
+                error = "p0_player 字段缺失或为空";
+                Log.Warn(Log.Channels.WorldBuild, "❌ {0}", error);
+                return false;
+            }
 
             reply = result;
+
+            // 日志输出
+            Log.Info(Log.Channels.WorldBuild,
+                "✅ 成功解析世界构建"
+                + " | L4长度={0} L3长度={1} L2长度={2} L1长度={3}"
+                + " | 玩家={4}({5}), {6}, {7}岁, 位于{8}"
+                + " | raw长度={9}",
+                result.L4Text.Length, result.L3Text.Length,
+                result.L2Text.Length, result.L1Text.Length,
+                result.Player.Name, result.Player.Courtesy,
+                result.Player.Sex, result.Player.Age,
+                result.Player.LocationName,
+                raw.Length);
+
             return true;
         }
     }

@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using ACLS.Logging;
 
 namespace ACLS.Llm
 {
@@ -75,6 +77,7 @@ namespace ACLS.Llm
             if (string.IsNullOrWhiteSpace(raw))
             {
                 error = "LLM 返回为空";
+                Log.Warn(Log.Channels.LlmReply, "❌ 解析失败: {0}", error);
                 return false;
             }
 
@@ -96,18 +99,26 @@ namespace ACLS.Llm
             if (openIdx < 0 || closeIdx <= openIdx)
             {
                 error = "未找到 JSON 对象（{...}）";
+                Log.Warn(Log.Channels.LlmReply, "❌ {0} | raw(前200字)={1}", error, Truncate(text, 200));
                 return false;
             }
             string json = text.Substring(openIdx, closeIdx - openIdx + 1);
 
             JObject obj;
             try { obj = JObject.Parse(json); }
-            catch (JsonException ex) { error = "JSON 解析失败：" + ex.Message; return false; }
+            catch (JsonException ex)
+            {
+                error = "JSON 解析失败：" + ex.Message;
+                Log.Warn(Log.Channels.LlmReply, "❌ {0} | json(前300字)={1}", error, Truncate(json, 300));
+                return false;
+            }
 
             string narration = (string)obj["narration"];
             if (string.IsNullOrWhiteSpace(narration))
             {
                 error = "narration 字段缺失或为空";
+                Log.Warn(Log.Channels.LlmReply, "❌ {0} | 顶层keys={1}", error,
+                    string.Join(",", ((JObject)obj).Properties().Select(p => p.Name)));
                 return false;
             }
 
@@ -203,6 +214,22 @@ namespace ACLS.Llm
             }
 
             reply = result;
+
+            // 日志输出 LLM 返回的解析结果
+            var choiceLabels = string.Join(" | ", result.Choices.Select(c => c.Label));
+            Log.Info(Log.Channels.LlmReply,
+                "✅ 成功解析标准叙事回复"
+                + " | narration长度={0}"
+                + " | choices={1} [{2}]"
+                + " | participants={3}"
+                + " | 有_system={4}"
+                + " | raw长度={5}",
+                result.Narration.Length,
+                result.Choices.Count, choiceLabels,
+                result.SceneParticipants.Count,
+                result.System != null,
+                raw.Length);
+
             return true;
         }
 
@@ -220,5 +247,8 @@ namespace ACLS.Llm
                 Delta = e["delta"]?.Type == JTokenType.Integer ? (int)e["delta"] : 0,
             };
         }
+
+        private static string Truncate(string s, int max) =>
+            s == null ? "" : s.Length <= max ? s : s.Substring(0, max) + "…";
     }
 }

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using ACLS.Llm;
+using ACLS.Logging;
 
 namespace ACLS.Authoring
 {
@@ -25,7 +26,17 @@ namespace ACLS.Authoring
 
         // -------- meta --------
         public bool IsError;
-        public string ErrorMessage = "";
+        public string ErrorMessage
+        {
+            get => _errorMessage;
+            set
+            {
+                _errorMessage = value;
+                if (!string.IsNullOrEmpty(value))
+                    Log.Warn(Log.Channels.Llm, "DialogueResult ErrorMessage: {0}", value);
+            }
+        }
+        private string _errorMessage = "";
         public string RawResponse = "";
     }
 }

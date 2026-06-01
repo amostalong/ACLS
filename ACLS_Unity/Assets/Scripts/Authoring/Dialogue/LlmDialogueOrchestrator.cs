@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using ACLS.Data;
 using ACLS.Llm;
 using ACLS.Sim;
+using ACLS.Logging;
 using Cysharp.Threading.Tasks;
 using UnityEngine;
 
@@ -85,6 +87,7 @@ namespace ACLS.Authoring
         public void TransitionTo(DialogueStateType type)
         {
             var prev = CurrentState?.StateType ?? (DialogueStateType)(-1);
+            Log.Info(Log.Channels.Llm, "🔄 TransitionTo(type): {0} → {1}", prev, type);
             CurrentState?.Exit();
 
             CurrentState = type switch
@@ -102,6 +105,7 @@ namespace ACLS.Authoring
         public void TransitionTo(DialogueState state)
         {
             var prev = CurrentState?.StateType ?? (DialogueStateType)(-1);
+            Log.Info(Log.Channels.Llm, "🔄 TransitionTo(state): {0} → {1}", prev, state.StateType);
             CurrentState?.Exit();
             CurrentState = state;
             CurrentState?.Enter();
@@ -117,10 +121,12 @@ namespace ACLS.Authoring
         {
             if (Busy || LlmClient == null || player == null)
             {
+                Log.Warn(Log.Channels.Llm, "❌ ExpandCharacter 跳过: Busy={0} LlmClient={1} player={2}", Busy, LlmClient != null, player != null);
                 onComplete?.Invoke(false);
                 return;
             }
 
+            Log.Info(Log.Channels.Llm, "▶ ExpandCharacter: preset={0} player={1}", preset?.Title ?? preset?.Blurb, player?.Name);
             var state = new CharacterExpansionState(this, preset, player);
             string prompt = state.AssemblePrompt();
 
@@ -136,6 +142,7 @@ namespace ACLS.Authoring
                 var result = state.ParseResponse(resp.Content);
                 if (result.IsError)
                 {
+                    Log.Error(Log.Channels.Llm, "角色拓展解析失败: {0}", result.ErrorMessage);
                     OnError?.Invoke(result.ErrorMessage);
                     onComplete?.Invoke(false);
                     return;
@@ -148,11 +155,15 @@ namespace ACLS.Authoring
             catch (OperationCanceledException)
             {
                 if (!lifetimeCts.IsCancellationRequested)
+                {
+                    Log.Error(Log.Channels.Llm, "已中断角色拓展");
                     OnError?.Invoke("已中断角色拓展。");
+                }
                 onComplete?.Invoke(false);
             }
             catch (Exception ex)
             {
+                Log.Error(Log.Channels.Llm, "角色拓展调用失败: {0}", ex.Message);
                 OnError?.Invoke("角色拓展调用失败：" + ex.Message);
                 onComplete?.Invoke(false);
             }
@@ -167,8 +178,13 @@ namespace ACLS.Authoring
         // 2. Opening scene (first narrative turn after expansion).
         public async void StartOpening(CharacterPresets.Preset preset)
         {
-            if (Busy || LlmClient == null) return;
+            if (Busy || LlmClient == null)
+            {
+                Log.Warn(Log.Channels.Llm, "❌ StartOpening 跳过: Busy={0} LlmClient={1}", Busy, LlmClient != null);
+                return;
+            }
 
+            Log.Info(Log.Channels.Llm, "▶ StartOpening: preset={0}", preset?.Title ?? preset?.Blurb);
             var state = new OpeningSceneState(this, preset);
             string prompt = state.AssemblePrompt();
 
@@ -187,10 +203,14 @@ namespace ACLS.Authoring
             catch (OperationCanceledException)
             {
                 if (!lifetimeCts.IsCancellationRequested)
+                {
+                    Log.Error(Log.Channels.Llm, "已中断开场请求");
                     OnError?.Invoke("已中断开场请求。");
+                }
             }
             catch (Exception ex)
             {
+                Log.Error(Log.Channels.Llm, "开场调用失败: {0}", ex.Message);
                 OnError?.Invoke("开场调用失败：" + ex.Message);
             }
             finally
@@ -205,10 +225,12 @@ namespace ACLS.Authoring
         {
             if (Busy || LlmClient == null)
             {
+                Log.Warn(Log.Channels.Llm, "❌ StartWorldBuild 跳过: Busy={0} LlmClient={1}", Busy, LlmClient != null);
                 onComplete?.Invoke(false);
                 return;
             }
 
+            Log.Info(Log.Channels.Llm, "▶ StartWorldBuild: role={0} world={1}", Truncate(roleDescription ?? "", 60), Truncate(worldDescription ?? "", 60));
             var state = new WorldBuildState(this, roleDescription ?? "", worldDescription ?? "");
             string prompt = state.AssemblePrompt();
 
@@ -224,6 +246,7 @@ namespace ACLS.Authoring
                 var result = state.ParseResponse(resp.Content);
                 if (result.IsError)
                 {
+                    Log.Error(Log.Channels.Llm, "世界构建解析失败: {0}", result.ErrorMessage);
                     OnError?.Invoke(result.ErrorMessage);
                     onComplete?.Invoke(false);
                     return;
@@ -241,11 +264,15 @@ namespace ACLS.Authoring
             catch (OperationCanceledException)
             {
                 if (!lifetimeCts.IsCancellationRequested)
+                {
+                    Log.Error(Log.Channels.Llm, "已中断世界构建");
                     OnError?.Invoke("已中断世界构建。");
+                }
                 onComplete?.Invoke(false);
             }
             catch (Exception ex)
             {
+                Log.Error(Log.Channels.Llm, "世界构建调用失败: {0}", ex.Message);
                 OnError?.Invoke("世界构建调用失败：" + ex.Message);
                 onComplete?.Invoke(false);
             }
@@ -262,10 +289,12 @@ namespace ACLS.Authoring
         {
             if (Busy || LlmClient == null)
             {
+                Log.Warn(Log.Channels.Llm, "❌ StartStageCreate 跳过: Busy={0} LlmClient={1}", Busy, LlmClient != null);
                 onComplete?.Invoke(false);
                 return;
             }
 
+            Log.Info(Log.Channels.Llm, "▶ StartStageCreate: preset={0}", preset?.Title ?? preset?.Blurb);
             var state = new StageCreateState(this, preset);
             string prompt = state.AssemblePrompt();
 
@@ -281,6 +310,7 @@ namespace ACLS.Authoring
                 var result = state.ParseResponse(resp.Content);
                 if (result.IsError)
                 {
+                    Log.Error(Log.Channels.Llm, "舞台生成解析失败: {0}", result.ErrorMessage);
                     OnError?.Invoke(result.ErrorMessage);
                     onComplete?.Invoke(false);
                     return;
@@ -298,11 +328,15 @@ namespace ACLS.Authoring
             catch (OperationCanceledException)
             {
                 if (!lifetimeCts.IsCancellationRequested)
+                {
+                    Log.Error(Log.Channels.Llm, "已中断舞台生成");
                     OnError?.Invoke("已中断舞台生成。");
+                }
                 onComplete?.Invoke(false);
             }
             catch (Exception ex)
             {
+                Log.Error(Log.Channels.Llm, "舞台生成调用失败: {0}", ex.Message);
                 OnError?.Invoke("舞台生成调用失败：" + ex.Message);
                 onComplete?.Invoke(false);
             }
@@ -318,7 +352,14 @@ namespace ACLS.Authoring
         public async void SendAction(string userInput, string displayText = null,
             bool addToHistory = true)
         {
-            if (Busy || LlmClient == null || CurrentState == null) return;
+            if (Busy || LlmClient == null || CurrentState == null)
+            {
+                Log.Warn(Log.Channels.Llm, "❌ SendAction 跳过: Busy={0} LlmClient={1} CurrentState={2}", Busy, LlmClient != null, CurrentState?.StateType);
+                return;
+            }
+
+            Log.Info(Log.Channels.Llm, "▶ SendAction: userInput={0} displayText={1} addToHistory={2}",
+                Truncate(userInput ?? "", 80), Truncate(displayText ?? "", 80), addToHistory);
 
             if (addToHistory && !string.IsNullOrWhiteSpace(displayText))
                 History.Add(new ChatMessage(ChatRole.User, displayText));
@@ -339,10 +380,14 @@ namespace ACLS.Authoring
             catch (OperationCanceledException)
             {
                 if (!lifetimeCts.IsCancellationRequested)
+                {
+                    Log.Error(Log.Channels.Llm, "已中断当前请求");
                     OnError?.Invoke("已中断当前请求。");
+                }
             }
             catch (Exception ex)
             {
+                Log.Error(Log.Channels.Llm, "调用 LLM 失败: {0}", ex.Message);
                 OnError?.Invoke("调用 LLM 失败：" + ex.Message);
             }
             finally
@@ -398,6 +443,10 @@ namespace ACLS.Authoring
                 }
             }, ct);
 
+            // 日志输出 LLM 流式响应汇总
+            Log.Info(Log.Channels.Llm, "✅ 收到完整流式响应 | 总长度={0} | 前80字={1}",
+                raw.Length, Truncate(raw.ToString(), 80));
+
             return resp;
         }
 
@@ -450,6 +499,7 @@ namespace ACLS.Authoring
         {
             if (result.IsError)
             {
+                Log.Error(Log.Channels.Llm, "HandleResult 收到错误: {0}", result.ErrorMessage);
                 OnError?.Invoke(result.ErrorMessage);
                 return;
             }
@@ -459,6 +509,24 @@ namespace ACLS.Authoring
 
             // 2. Publish user-facing content.
             SetThinking(result.Thinking ?? "");
+
+            var effectSummary = string.Join(", ", result.Effects.Select(e => $"{e.Kind}({e.Stat ?? e.Trait ?? e.Flag ?? e.Target ?? "?"})"));
+            Log.Info(Log.Channels.Llm,
+                "▶ HandleResult: state={0}"
+                + " | narration长度={1}"
+                + " | choices={2}"
+                + " | participants={3}"
+                + " | effects=[{4}]"
+                + " | suggestedNext={5}"
+                + " | daysPassed={6}",
+                state.StateType,
+                result.Narration?.Length ?? 0,
+                result.Choices.Count,
+                result.Participants.Count,
+                effectSummary,
+                result.SuggestedNextState ?? "(无)",
+                result.DaysPassed);
+
             if (!string.IsNullOrWhiteSpace(result.Narration))
             {
                 History.Add(new ChatMessage(ChatRole.Assistant, result.Narration));
@@ -472,6 +540,7 @@ namespace ACLS.Authoring
             var nextType = state.GetNextState(result);
             if (nextType.HasValue && nextType.Value != state.StateType)
             {
+                Log.Info(Log.Channels.Llm, "🔄 状态转换: {0} → {1}", state.StateType, nextType.Value);
                 TransitionTo(nextType.Value);
             }
         }
@@ -489,5 +558,8 @@ namespace ACLS.Authoring
             Busy = v;
             OnBusyChanged?.Invoke(v);
         }
+
+        private static string Truncate(string s, int max) =>
+            s == null ? "" : s.Length <= max ? s : s.Substring(0, max) + "…";
     }
 }
