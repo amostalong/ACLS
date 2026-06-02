@@ -445,9 +445,30 @@ namespace ACLS.Authoring
 
             // 日志输出 LLM 流式响应汇总
             Log.Info(Log.Channels.Llm, "✅ 收到完整流式响应 | 总长度={0} | 前80字={1}",
-                raw.Length, Truncate(raw.ToString(), 80));
+                raw.Length, Truncate(raw.ToString(), 1000));
+
+            // Record in debug panel (always on main thread).
+            string reqJson = $"{{\"model\":\"...\",\"system\":{EscapeJson(prompt)},\"messages\":[{string.Join(",", messages.Select(m => $"{{\"role\":\"{m.Role}\",\"content\":{EscapeJson(m.Content)}}}"))}]}}";
+            LlmDebugLog.Add(GetProviderLabel(), reqJson, resp.Content);
 
             return resp;
+        }
+
+        private string GetProviderLabel()
+        {
+            string name = LlmClient?.GetType().Name ?? "?";
+            return name switch
+            {
+                "AnthropicClient" => "Anthropic",
+                "OpenAiCompatibleClient" => "OpenAI",
+                _ => name,
+            };
+        }
+
+        private static string EscapeJson(string s)
+        {
+            if (s == null) return "\"\"";
+            return "\"" + s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r").Replace("\t", "\\t") + "\"";
         }
 
         private static bool TryExtractThinking(StringBuilder raw, out string thinking)

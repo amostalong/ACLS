@@ -1,5 +1,5 @@
 %YAML 1.1
-%TAG !u! tag:unity3d.com,2011:
+%TAG !u! tag:yousandi.cn,2023:
 --- !u!114 &11400000
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -19,7 +19,7 @@ MonoBehaviour:
     ApiKey: lumos-aedcccffbab12c7bf1a7037affec629d1c177c5cab37f18011d61cc4737ff8e1366e91f1256239cc3147e5d58622ec6f2ec8bbca0fa6c276bbe1b7f2fd4e4a3b.ca10a0b90c383a7bd4ebe0d56abfad84
     Model: deepseek-v4-flash
     BaseUrl: https://lumos.diandian.info/winky/deepseek
-    MaxTokens: 512
+    MaxTokens: 8192
     VerboseLogging: 1
   - ProfileName: claude-sonnet-4-6
     IsActive: 0

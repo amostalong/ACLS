@@ -78,6 +78,7 @@ namespace ACLS.Llm
             {
                 error = "LLM 返回为空";
                 Log.Warn(Log.Channels.LlmReply, "❌ 解析失败: {0}", error);
+                Log.Trace(Log.Channels.LlmReply, "原始响应为空");
                 return false;
             }
 
@@ -99,7 +100,8 @@ namespace ACLS.Llm
             if (openIdx < 0 || closeIdx <= openIdx)
             {
                 error = "未找到 JSON 对象（{...}）";
-                Log.Warn(Log.Channels.LlmReply, "❌ {0} | raw(前200字)={1}", error, Truncate(text, 200));
+                Log.Warn(Log.Channels.LlmReply, "❌ {0}", error);
+                Log.Trace(Log.Channels.LlmReply, "原始响应:\n{0}", raw);
                 return false;
             }
             string json = text.Substring(openIdx, closeIdx - openIdx + 1);
@@ -109,7 +111,8 @@ namespace ACLS.Llm
             catch (JsonException ex)
             {
                 error = "JSON 解析失败：" + ex.Message;
-                Log.Warn(Log.Channels.LlmReply, "❌ {0} | json(前300字)={1}", error, Truncate(json, 300));
+                Log.Warn(Log.Channels.LlmReply, "❌ {0}", error);
+                Log.Trace(Log.Channels.LlmReply, "原始响应:\n{0}", raw);
                 return false;
             }
 
@@ -117,8 +120,8 @@ namespace ACLS.Llm
             if (string.IsNullOrWhiteSpace(narration))
             {
                 error = "narration 字段缺失或为空";
-                Log.Warn(Log.Channels.LlmReply, "❌ {0} | 顶层keys={1}", error,
-                    string.Join(",", ((JObject)obj).Properties().Select(p => p.Name)));
+                Log.Warn(Log.Channels.LlmReply, "❌ {0}", error);
+                Log.Trace(Log.Channels.LlmReply, "原始响应:\n{0}", raw);
                 return false;
             }
 
@@ -182,6 +185,8 @@ namespace ACLS.Llm
             if (result.Choices.Count == 0)
             {
                 error = "choices 为空（场景至少要给 1 个可选行动）";
+                Log.Warn(Log.Channels.LlmReply, "❌ {0}", error);
+                Log.Trace(Log.Channels.LlmReply, "原始响应:\n{0}", raw);
                 return false;
             }
 

@@ -27,7 +27,7 @@ namespace ACLS.UI
                 Vector2.zero, Vector2.one, new Color(0.08f, 0.08f, 0.12f, 0.95f));
             bg.transform.SetAsFirstSibling();
 
-            dateLabel = UiKit.CreateText(transform, "Date", 26, TextAlignmentOptions.Left);
+            dateLabel = UiKit.CreateText(transform, "Date", 29, TextAlignmentOptions.Left);
             var dateRt = (RectTransform)dateLabel.transform;
             dateRt.anchorMin = new Vector2(0, 0);
             dateRt.anchorMax = new Vector2(0, 1);
@@ -59,7 +59,7 @@ namespace ACLS.UI
             AddBtn(brRt, "3 快",        80, () => clock.SetSpeed(3));
             AddBtn(brRt, "调试",        64, () => debugPanel?.Toggle());
 
-            statusLabel = UiKit.CreateText(transform, "Status", 18, TextAlignmentOptions.Right);
+            statusLabel = UiKit.CreateText(transform, "Status", 21, TextAlignmentOptions.Right);
             var stRt = (RectTransform)statusLabel.transform;
             stRt.anchorMin = new Vector2(1, 0);
             stRt.anchorMax = new Vector2(1, 1);

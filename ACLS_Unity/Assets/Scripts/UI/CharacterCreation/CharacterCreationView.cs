@@ -78,7 +78,7 @@ namespace ACLS.UI
 
         private void BuildTitle()
         {
-            var title = UiKit.CreateText(card.transform, "Title", 28, TextAlignmentOptions.Center);
+            var title = UiKit.CreateText(card.transform, "Title", 31, TextAlignmentOptions.Center);
             var titleRt = (RectTransform)title.transform;
             titleRt.anchorMin = new Vector2(0, 1);
             titleRt.anchorMax = new Vector2(1, 1);
@@ -99,7 +99,7 @@ namespace ACLS.UI
             rt.offsetMin = new Vector2(28, -(yFromTop + 50));
             rt.offsetMax = new Vector2(-28, -yFromTop);
 
-            var nameLab = UiKit.CreateText(rowGo.transform, "NameLab", 16, TextAlignmentOptions.Left);
+            var nameLab = UiKit.CreateText(rowGo.transform, "NameLab", 19, TextAlignmentOptions.Left);
             var nameLabRt = (RectTransform)nameLab.transform;
             nameLabRt.anchorMin = new Vector2(0, 0);
             nameLabRt.anchorMax = new Vector2(0, 1);
@@ -116,7 +116,7 @@ namespace ACLS.UI
             niRt.sizeDelta = new Vector2(220, 0);
             niRt.anchoredPosition = new Vector2(80, 0);
 
-            var courtLab = UiKit.CreateText(rowGo.transform, "CourtLab", 16, TextAlignmentOptions.Left);
+            var courtLab = UiKit.CreateText(rowGo.transform, "CourtLab", 19, TextAlignmentOptions.Left);
             var courtLabRt = (RectTransform)courtLab.transform;
             courtLabRt.anchorMin = new Vector2(0, 0);
             courtLabRt.anchorMax = new Vector2(0, 1);
@@ -140,7 +140,7 @@ namespace ACLS.UI
 
         private void BuildErrorLabel(float yFromTop)
         {
-            errorText = UiKit.CreateText(card.transform, "Error", 14, TextAlignmentOptions.Left);
+            errorText = UiKit.CreateText(card.transform, "Error", 17, TextAlignmentOptions.Left);
             errorText.color = new Color(1f, 0.45f, 0.45f, 1f);
             var errRt = (RectTransform)errorText.transform;
             errRt.anchorMin = new Vector2(0, 1);
@@ -162,7 +162,7 @@ namespace ACLS.UI
             rt.offsetMin = new Vector2(28, -(yFromTop + 44));
             rt.offsetMax = new Vector2(-28, -yFromTop);
 
-            var sexLab = UiKit.CreateText(rowGo.transform, "SexLab", 16, TextAlignmentOptions.Left);
+            var sexLab = UiKit.CreateText(rowGo.transform, "SexLab", 19, TextAlignmentOptions.Left);
             var sexLabRt = (RectTransform)sexLab.transform;
             sexLabRt.anchorMin = new Vector2(0, 0);
             sexLabRt.anchorMax = new Vector2(0, 1);
@@ -192,7 +192,7 @@ namespace ACLS.UI
 
         private void BuildBackgroundLabel(float yFromTop)
         {
-            var bgLabel = UiKit.CreateText(card.transform, "BgLabel", 18, TextAlignmentOptions.Left);
+            var bgLabel = UiKit.CreateText(card.transform, "BgLabel", 21, TextAlignmentOptions.Left);
             var bgLabelRt = (RectTransform)bgLabel.transform;
             bgLabelRt.anchorMin = new Vector2(0, 1);
             bgLabelRt.anchorMax = new Vector2(1, 1);
@@ -228,7 +228,7 @@ namespace ACLS.UI
                 go.GetComponent<Image>().color = UnselectedColor;
                 go.GetComponent<Button>().onClick.AddListener(() => SelectPreset(captured));
 
-                var titleT = UiKit.CreateText(go.transform, "PTitle", 18, TextAlignmentOptions.TopLeft);
+                var titleT = UiKit.CreateText(go.transform, "PTitle", 21, TextAlignmentOptions.TopLeft);
                 var titleRt = (RectTransform)titleT.transform;
                 titleRt.anchorMin = new Vector2(0, 1);
                 titleRt.anchorMax = new Vector2(1, 1);
@@ -237,7 +237,7 @@ namespace ACLS.UI
                 titleRt.offsetMax = new Vector2(-12, -8);
                 titleT.text = $"{preset.Title}　·　{preset.LocationName} / {preset.TraitLabel}";
 
-                var blurbT = UiKit.CreateText(go.transform, "PBlurb", 14, TextAlignmentOptions.TopLeft);
+                var blurbT = UiKit.CreateText(go.transform, "PBlurb", 17, TextAlignmentOptions.TopLeft);
                 blurbT.color = new Color(0.85f, 0.85f, 0.85f, 1f);
                 var blurbRt = (RectTransform)blurbT.transform;
                 blurbRt.anchorMin = new Vector2(0, 0);

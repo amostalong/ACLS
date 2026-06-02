@@ -71,7 +71,7 @@ namespace ACLS.UI
 
         private void BuildTitle()
         {
-            var t = UiKit.CreateText(card.transform, "WsTitle", 28, TextAlignmentOptions.Center);
+            var t = UiKit.CreateText(card.transform, "WsTitle", 31, TextAlignmentOptions.Center);
             var rt = (RectTransform)t.transform;
             rt.anchorMin = new Vector2(0, 1); rt.anchorMax = new Vector2(1, 1);
             rt.pivot = new Vector2(0.5f, 1);
@@ -101,14 +101,14 @@ namespace ACLS.UI
                 go.GetComponent<Image>().color = UnselectedColor;
                 go.GetComponent<Button>().onClick.AddListener(() => SelectPreset(captured));
 
-                var titleT = UiKit.CreateText(go.transform, "PTitle", 18, TextAlignmentOptions.TopLeft);
+                var titleT = UiKit.CreateText(go.transform, "PTitle", 21, TextAlignmentOptions.TopLeft);
                 var titleRt = (RectTransform)titleT.transform;
                 titleRt.anchorMin = new Vector2(0, 1); titleRt.anchorMax = new Vector2(1, 1);
                 titleRt.pivot = new Vector2(0.5f, 1);
                 titleRt.offsetMin = new Vector2(12, -34); titleRt.offsetMax = new Vector2(-12, -8);
                 titleT.text = $"{preset.Title}　·　{preset.Era}";
 
-                var descT = UiKit.CreateText(go.transform, "PDesc", 14, TextAlignmentOptions.TopLeft);
+                var descT = UiKit.CreateText(go.transform, "PDesc", 17, TextAlignmentOptions.TopLeft);
                 descT.color = new Color(0.82f, 0.82f, 0.82f, 1f);
                 var descRt = (RectTransform)descT.transform;
                 descRt.anchorMin = new Vector2(0, 0); descRt.anchorMax = new Vector2(1, 1);
@@ -140,7 +140,7 @@ namespace ACLS.UI
 
         private void BuildErrorLabel(float yFromTop)
         {
-            errorText = UiKit.CreateText(card.transform, "WsError", 14, TextAlignmentOptions.Center);
+            errorText = UiKit.CreateText(card.transform, "WsError", 17, TextAlignmentOptions.Center);
             errorText.color = new Color(1f, 0.45f, 0.45f, 1f);
             var rt = (RectTransform)errorText.transform;
             rt.anchorMin = new Vector2(0, 1); rt.anchorMax = new Vector2(1, 1);

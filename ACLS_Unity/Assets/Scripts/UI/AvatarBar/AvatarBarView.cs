@@ -153,7 +153,7 @@ namespace ACLS.UI
                 outline.effectDistance = new Vector2(2, -2);
             }
 
-            var faceText = UiKit.CreateText(tileGo.transform, "Face", 26, TextAlignmentOptions.Center);
+            var faceText = UiKit.CreateText(tileGo.transform, "Face", 29, TextAlignmentOptions.Center);
             var faceRt = (RectTransform)faceText.transform;
             faceRt.anchorMin = new Vector2(0, 0.30f);
             faceRt.anchorMax = new Vector2(1, 1);
@@ -162,7 +162,7 @@ namespace ACLS.UI
             faceText.text = $"<b>{face}</b>";
             faceText.color = new Color(1, 1, 1, 0.96f);
 
-            var sub = UiKit.CreateText(tileGo.transform, "Sub", 11, TextAlignmentOptions.Center);
+            var sub = UiKit.CreateText(tileGo.transform, "Sub", 14, TextAlignmentOptions.Center);
             var subRt = (RectTransform)sub.transform;
             subRt.anchorMin = new Vector2(0, 0);
             subRt.anchorMax = new Vector2(1, 0.30f);

@@ -20,7 +20,7 @@ namespace ACLS.UI
                 Vector2.zero, Vector2.one, new Color(0.10f, 0.10f, 0.14f, 0.85f))
                 .transform.SetAsFirstSibling();
 
-            content = UiKit.CreateText(transform, "Content", 18, TextAlignmentOptions.TopLeft);
+            content = UiKit.CreateText(transform, "Content", 21, TextAlignmentOptions.TopLeft);
             var rt = (RectTransform)content.transform;
             rt.offsetMin = new Vector2(20, 20);
             rt.offsetMax = new Vector2(-20, -20);

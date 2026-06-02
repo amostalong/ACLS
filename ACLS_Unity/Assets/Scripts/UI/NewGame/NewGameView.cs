@@ -122,7 +122,7 @@ namespace ACLS.UI
 
         private void BuildTitle()
         {
-            var t = UiKit.CreateText(card.transform, "NgTitle", 28, TextAlignmentOptions.Center);
+            var t = UiKit.CreateText(card.transform, "NgTitle", 31, TextAlignmentOptions.Center);
             var rt = (RectTransform)t.transform;
             rt.anchorMin = new Vector2(0, 1);
             rt.anchorMax = new Vector2(1, 1);
@@ -159,14 +159,14 @@ namespace ACLS.UI
                 if (p.IsCustom)
                 {
                     // Custom card
-                    var icon = UiKit.CreateText(go.transform, "Icon", 22, TextAlignmentOptions.TopLeft);
+                    var icon = UiKit.CreateText(go.transform, "Icon", 25, TextAlignmentOptions.TopLeft);
                     var iRt = (RectTransform)icon.transform;
                     iRt.anchorMin = new Vector2(0, 1); iRt.anchorMax = new Vector2(1, 1);
                     iRt.pivot = new Vector2(0.5f, 1);
                     iRt.offsetMin = new Vector2(14, -34); iRt.offsetMax = new Vector2(-14, -10);
                     icon.text = "创建 自定义角色";
 
-                    var desc = UiKit.CreateText(go.transform, "Desc", 14, TextAlignmentOptions.TopLeft);
+                    var desc = UiKit.CreateText(go.transform, "Desc", 17, TextAlignmentOptions.TopLeft);
                     desc.color = new Color(0.82f, 0.82f, 0.82f, 1f);
                     var dRt = (RectTransform)desc.transform;
                     dRt.anchorMin = new Vector2(0, 0); dRt.anchorMax = new Vector2(1, 1);
@@ -176,14 +176,14 @@ namespace ACLS.UI
                 else
                 {
                     // Normal preset card
-                    var title = UiKit.CreateText(go.transform, "Title", 18, TextAlignmentOptions.TopLeft);
+                    var title = UiKit.CreateText(go.transform, "Title", 21, TextAlignmentOptions.TopLeft);
                     var tRt = (RectTransform)title.transform;
                     tRt.anchorMin = new Vector2(0, 1); tRt.anchorMax = new Vector2(1, 1);
                     tRt.pivot = new Vector2(0.5f, 1);
                     tRt.offsetMin = new Vector2(14, -32); tRt.offsetMax = new Vector2(-14, -8);
                     title.text = $"{p.Title}　·　{p.Era}";
 
-                    var desc = UiKit.CreateText(go.transform, "Desc", 14, TextAlignmentOptions.TopLeft);
+                    var desc = UiKit.CreateText(go.transform, "Desc", 17, TextAlignmentOptions.TopLeft);
                     desc.color = new Color(0.82f, 0.82f, 0.82f, 1f);
                     var dRt = (RectTransform)desc.transform;
                     dRt.anchorMin = new Vector2(0, 0); dRt.anchorMax = new Vector2(1, 1);
@@ -213,7 +213,7 @@ namespace ACLS.UI
             rt.offsetMax = new Vector2(-24, -y);
 
             // 姓名*
-            var nameLab = UiKit.CreateText(nameRow.transform, "NameLab", 16, TextAlignmentOptions.Left);
+            var nameLab = UiKit.CreateText(nameRow.transform, "NameLab", 19, TextAlignmentOptions.Left);
             var nlRt = (RectTransform)nameLab.transform;
             nlRt.anchorMin = new Vector2(0, 0); nlRt.anchorMax = new Vector2(0, 1);
             nlRt.pivot = new Vector2(0, 0.5f);
@@ -229,7 +229,7 @@ namespace ACLS.UI
             niRt.anchoredPosition = new Vector2(64, 0);
 
             // 字
-            var courtLab = UiKit.CreateText(nameRow.transform, "CourtLab", 16, TextAlignmentOptions.Left);
+            var courtLab = UiKit.CreateText(nameRow.transform, "CourtLab", 19, TextAlignmentOptions.Left);
             var clRt = (RectTransform)courtLab.transform;
             clRt.anchorMin = new Vector2(0, 0); clRt.anchorMax = new Vector2(0, 1);
             clRt.pivot = new Vector2(0, 0.5f);
@@ -280,7 +280,7 @@ namespace ACLS.UI
             bRt.anchoredPosition = new Vector2(16, -12);
 
             // Title
-            var title = UiKit.CreateText(customGroup.transform, "CustomTitle", 24, TextAlignmentOptions.Center);
+            var title = UiKit.CreateText(customGroup.transform, "CustomTitle", 27, TextAlignmentOptions.Center);
             var tRt = (RectTransform)title.transform;
             tRt.anchorMin = new Vector2(0, 1); tRt.anchorMax = new Vector2(1, 1);
             tRt.pivot = new Vector2(0.5f, 1);
@@ -289,7 +289,7 @@ namespace ACLS.UI
             title.text = "自定义角色与世界";
 
             // 角色描述
-            var charLab = UiKit.CreateText(customGroup.transform, "CharLab", 16, TextAlignmentOptions.Left);
+            var charLab = UiKit.CreateText(customGroup.transform, "CharLab", 19, TextAlignmentOptions.Left);
             var chRt = (RectTransform)charLab.transform;
             chRt.anchorMin = new Vector2(0, 1); chRt.anchorMax = new Vector2(1, 1);
             chRt.pivot = new Vector2(0.5f, 1);
@@ -309,7 +309,7 @@ namespace ACLS.UI
             // but the RectTransform offsets are set above so it spans the full area).
 
             // 世界描述
-            var worldLab = UiKit.CreateText(customGroup.transform, "WorldLab", 16, TextAlignmentOptions.Left);
+            var worldLab = UiKit.CreateText(customGroup.transform, "WorldLab", 19, TextAlignmentOptions.Left);
             var wlRt = (RectTransform)worldLab.transform;
             wlRt.anchorMin = new Vector2(0, 1); wlRt.anchorMax = new Vector2(1, 1);
             wlRt.pivot = new Vector2(0.5f, 1);
@@ -348,7 +348,7 @@ namespace ACLS.UI
 
         private void BuildErrorLabel()
         {
-            errorText = UiKit.CreateText(card.transform, "NgError", 14, TextAlignmentOptions.Center);
+            errorText = UiKit.CreateText(card.transform, "NgError", 17, TextAlignmentOptions.Center);
             errorText.color = new Color(1f, 0.45f, 0.45f, 1f);
             // Anchored to bottom of card, just above the start button.
             var rt = (RectTransform)errorText.transform;

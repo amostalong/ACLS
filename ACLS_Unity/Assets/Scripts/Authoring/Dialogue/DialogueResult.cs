@@ -29,12 +29,7 @@ namespace ACLS.Authoring
         public string ErrorMessage
         {
             get => _errorMessage;
-            set
-            {
-                _errorMessage = value;
-                if (!string.IsNullOrEmpty(value))
-                    Log.Warn(Log.Channels.Llm, "DialogueResult ErrorMessage: {0}", value);
-            }
+            set => _errorMessage = value;
         }
         private string _errorMessage = "";
         public string RawResponse = "";

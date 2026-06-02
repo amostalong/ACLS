@@ -53,7 +53,7 @@ namespace ACLS.UI
             img.color = new Color(0.22f, 0.22f, 0.28f, 0.95f);
             var btn = go.GetComponent<Button>();
             if (onClick != null) btn.onClick.AddListener(() => onClick());
-            var label = CreateText(go.transform, "Label", 16, TextAlignmentOptions.Center);
+            var label = CreateText(go.transform, "Label", 19, TextAlignmentOptions.Center);
             label.text = text;
             return btn;
         }

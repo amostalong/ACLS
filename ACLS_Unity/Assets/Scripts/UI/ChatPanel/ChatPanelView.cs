@@ -170,7 +170,7 @@ namespace ACLS.UI
 
         private void BuildStatusBar(Transform parent)
         {
-            statusLabel = UiKit.CreateText(parent, "Status", 14, TextAlignmentOptions.Left);
+            statusLabel = UiKit.CreateText(parent, "Status", 17, TextAlignmentOptions.Left);
             var rt = (RectTransform)statusLabel.transform;
             rt.anchorMin = new Vector2(0, 0);
             rt.anchorMax = new Vector2(1, 0);
@@ -271,7 +271,7 @@ namespace ACLS.UI
                 Vector2.zero, Vector2.one, new Color(0.05f, 0.05f, 0.08f, 0.9f));
             bg.transform.SetAsFirstSibling();
 
-            var title = UiKit.CreateText(parent, "Title", 14, TextAlignmentOptions.Left);
+            var title = UiKit.CreateText(parent, "Title", 17, TextAlignmentOptions.Left);
             var titleRt = (RectTransform)title.transform;
             titleRt.anchorMin = new Vector2(0, 1);
             titleRt.anchorMax = new Vector2(1, 1);
@@ -349,7 +349,7 @@ namespace ACLS.UI
             textGo.transform.SetParent(contentGo.transform, false);
             thinkingLabel = textGo.GetComponent<TextMeshProUGUI>();
             thinkingLabel.font = UiKit.TmpFont;
-            thinkingLabel.fontSize = 14;
+            thinkingLabel.fontSize = 17;
             thinkingLabel.color = new Color(0.9f, 0.9f, 0.95f, 1f);
             thinkingLabel.alignment = TextAlignmentOptions.TopLeft;
             thinkingLabel.richText = false;
@@ -412,7 +412,7 @@ namespace ACLS.UI
 
             var t = go.GetComponent<TextMeshProUGUI>();
             t.font = UiKit.TmpFont;
-            t.fontSize = 16;
+            t.fontSize = 19;
             t.color = Color.white;
             t.alignment = TextAlignmentOptions.TopLeft;
             t.richText = true;
@@ -530,7 +530,7 @@ namespace ACLS.UI
             phRt.offsetMax = Vector2.zero;
             var ph = phGo.GetComponent<TextMeshProUGUI>();
             ph.font = UiKit.TmpFont;
-            ph.fontSize = 16;
+            ph.fontSize = 19;
             ph.color = new Color(1, 1, 1, 0.35f);
             ph.alignment = TextAlignmentOptions.Left;
             ph.enableWordWrapping = false;
@@ -547,7 +547,7 @@ namespace ACLS.UI
             textRt.offsetMax = Vector2.zero;
             var t = textGo.GetComponent<TextMeshProUGUI>();
             t.font = UiKit.TmpFont;
-            t.fontSize = 16;
+            t.fontSize = 19;
             t.color = Color.white;
             t.alignment = TextAlignmentOptions.Left;
             t.enableWordWrapping = false;

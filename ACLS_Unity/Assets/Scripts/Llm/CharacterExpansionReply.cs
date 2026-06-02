@@ -58,6 +58,7 @@ namespace ACLS.Llm
             {
                 error = "LLM 返回为空";
                 Log.Warn(Log.Channels.CharExpand, "❌ {0}", error);
+                Log.Trace(Log.Channels.CharExpand, "原始响应为空");
                 return false;
             }
 
@@ -78,13 +79,14 @@ namespace ACLS.Llm
             {
                 error = "未找到 JSON 对象";
                 Log.Warn(Log.Channels.CharExpand, "❌ {0}", error);
+                Log.Trace(Log.Channels.CharExpand, "原始响应:\n{0}", raw);
                 return false;
             }
             string json = text.Substring(openIdx, closeIdx - openIdx + 1);
 
             JObject obj;
             try { obj = JObject.Parse(json); }
-            catch (JsonException ex) { error = "JSON 解析失败：" + ex.Message; Log.Warn(Log.Channels.CharExpand, "❌ {0}", error); return false; }
+            catch (JsonException ex) { error = "JSON 解析失败：" + ex.Message; Log.Warn(Log.Channels.CharExpand, "❌ {0}", error); Log.Trace(Log.Channels.CharExpand, "原始响应:\n{0}", raw); return false; }
 
             var result = new CharacterExpansionReply();
             result.Thinking = ((string)obj["thinking"] ?? "").Trim();

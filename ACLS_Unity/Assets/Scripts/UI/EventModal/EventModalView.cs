@@ -61,7 +61,7 @@ namespace ACLS.UI
             rt.sizeDelta = new Vector2(720, 420);
             root.GetComponent<Image>().color = new Color(0.13f, 0.13f, 0.17f, 0.97f);
 
-            titleText = UiKit.CreateText(root.transform, "Title", 28, TextAlignmentOptions.Center);
+            titleText = UiKit.CreateText(root.transform, "Title", 31, TextAlignmentOptions.Center);
             var titleRt = (RectTransform)titleText.transform;
             titleRt.anchorMin = new Vector2(0, 1);
             titleRt.anchorMax = new Vector2(1, 1);
@@ -69,7 +69,7 @@ namespace ACLS.UI
             titleRt.sizeDelta = new Vector2(0, 50);
             titleRt.anchoredPosition = new Vector2(0, -8);
 
-            descText = UiKit.CreateText(root.transform, "Desc", 18, TextAlignmentOptions.TopLeft);
+            descText = UiKit.CreateText(root.transform, "Desc", 21, TextAlignmentOptions.TopLeft);
             var descRt = (RectTransform)descText.transform;
             descRt.anchorMin = new Vector2(0, 0.4f);
             descRt.anchorMax = new Vector2(1, 1);
