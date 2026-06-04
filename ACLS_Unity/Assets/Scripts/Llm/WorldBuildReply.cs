@@ -43,6 +43,14 @@ namespace ACLS.Llm
         public List<string> L2Pressures = new List<string>();
         public List<string> L2Opportunities = new List<string>();
 
+        // ---- 旧单步流水线的 L2 实体列表（兼容 WorldBuildState / WorldDataRegistrar） ----
+        // 这些在当前 JSON schema 中不会被 TryParse 填充，但保留空列表使编译/运行时安全。
+        public List<CharSpec> Chars = new List<CharSpec>();
+        public List<FactionSpec> Factions = new List<FactionSpec>();
+        public List<PlaceSpec> Places = new List<PlaceSpec>();
+        public List<EventSpec> ActiveEvents = new List<EventSpec>();
+        public List<string> Opportunities = new List<string>();
+
         // ---- 内层类型（JSON 解析用） ----
         [Serializable]
         public sealed class FactionInfo
@@ -333,5 +341,41 @@ namespace ACLS.Llm
 
         private static string Truncate(string s, int max) =>
             s == null ? "" : s.Length <= max ? s : s.Substring(0, max) + "…";
+
+        // ---- 旧单步流水线的 L2 实体类型（兼容 WorldBuildState / WorldDataRegistrar） ----
+        [Serializable]
+        public sealed class CharSpec
+        {
+            public string name = "";
+            public string role = "";
+            public string location = "";
+            public int relation;
+            public int reachable_in_days;
+        }
+
+        [Serializable]
+        public sealed class FactionSpec
+        {
+            public string name = "";
+            public string type = "";
+            public string stance = "";
+        }
+
+        [Serializable]
+        public sealed class PlaceSpec
+        {
+            public string name = "";
+            public string type = "";
+            public string description = "";
+        }
+
+        [Serializable]
+        public sealed class EventSpec
+        {
+            public string title = "";
+            public string urgency = "";
+            public string deadline = "";
+            public string detail = "";
+        }
     }
 }

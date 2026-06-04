@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using ACLS.Llm.Tools;
+using ACLS.Logging;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
@@ -52,7 +53,7 @@ namespace ACLS.Llm
             };
 
             string json = JsonConvert.SerializeObject(body);
-            if (verbose) Debug.Log($"[OpenAI] → {Truncate(json, 300)}");
+            if (verbose) Log.Info(Log.Channels.Network, "[OpenAI] → {0}", Truncate(json, 300));
 
             return await SendOpenAi(json, ct);
         }
@@ -76,7 +77,7 @@ namespace ACLS.Llm
             };
 
             string json = JsonConvert.SerializeObject(body);
-            if (verbose) Debug.Log($"[OpenAI] → {Truncate(json, 300)}");
+            if (verbose) Log.Info(Log.Channels.Network, "[OpenAI] → {0}", Truncate(json, 300));
 
             return await StreamOpenAi(json, onTextDelta, ct);
         }
@@ -104,7 +105,7 @@ namespace ACLS.Llm
                 bodyObj["tools"] = BuildOpenAiTools(tools);
 
             string json = bodyObj.ToString(Formatting.None);
-            if (verbose) Debug.Log($"[OpenAI] → (tools={tools?.Count ?? 0}) {Truncate(json, 300)}");
+            if (verbose) Log.Info(Log.Channels.Network, "[OpenAI] → (tools={0}) {1}", tools?.Count ?? 0, Truncate(json, 300));
 
             return await StreamOpenAi(json, onTextDelta, ct);
         }
@@ -124,7 +125,7 @@ namespace ACLS.Llm
             if (!resp.IsSuccessStatusCode)
             {
                 string err = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
-                if (verbose) Debug.Log($"[OpenAI] ← {(int)resp.StatusCode} {Truncate(err, 300)}");
+                if (verbose) Log.Info(Log.Channels.Network, "[OpenAI] ← {0} {1}", (int)resp.StatusCode, Truncate(err, 300));
                 LlmDebugLog.Add("OpenAI", requestJson, err);
                 throw new HttpRequestException($"OpenAI 兼容 {(int)resp.StatusCode}: {Truncate(err, 500)}");
             }
@@ -230,7 +231,7 @@ namespace ACLS.Llm
             using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
             string respText = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
 
-            if (verbose) Debug.Log($"[OpenAI] ← {(int)resp.StatusCode} {Truncate(respText, 300)}");
+            if (verbose) Log.Info(Log.Channels.Network, "[OpenAI] ← {0} {1}", (int)resp.StatusCode, Truncate(respText, 300));
             LlmDebugLog.Add("OpenAI", requestJson, respText);
 
             if (!resp.IsSuccessStatusCode)

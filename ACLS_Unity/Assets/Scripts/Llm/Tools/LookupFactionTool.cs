@@ -47,7 +47,7 @@ namespace ACLS.Llm.Tools
             if (string.IsNullOrWhiteSpace(name))
                 return Task.FromResult("缺少必要参数：name（势力名称）。");
 
-            var result = GameDataLoader.FindFaction(name.Trim());
+            var result = GameMemory.Instance.FindFaction(name.Trim());
             if (result == null)
                 return Task.FromResult($"未找到势力「{name.Trim()}」的档案。");
 

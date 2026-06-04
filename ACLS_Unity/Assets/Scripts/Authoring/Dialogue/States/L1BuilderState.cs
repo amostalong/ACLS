@@ -67,9 +67,12 @@ namespace ACLS.Authoring
             sb.Append("\n    active_npcs: [{name, role, relation_value(-50~50), stance}] 在场NPC");
             sb.Append("\n    immediate_situation: 主角当前即时处境");
             sb.Append("\n    exits: [地点+时间描述]");
-            sb.Append("\n- l2_arena: 近域层，结构如下：");
-            sb.Append("\n    near_contacts: [{name, role, location, days_away}]");
-            sb.Append("\n    active_pressures: [压力事件]");
+            sb.Append("\n- l2_arena: 近域层（玩家势力触角所及的区域画布），结构如下：");
+            sb.Append("\n    region: 本区域全称");
+            sb.Append("\n    environment: { terrain（地形）, waterways（水系数组）, key_locations:[{name, type, description}] }");
+            sb.Append("\n    contacts: [{name, role, location, relation(-50~50), reachable_in_days}]");
+            sb.Append("\n    factions_visible: [{name, type, stance}]");
+            sb.Append("\n    active_events: [{title, urgency(high|medium|low), deadline, detail}]");
             sb.Append("\n    opportunities: [机遇]");
             sb.Append("\n- memory_entries: [要记录的事件，每条含 date 和 event]（可选）");
             sb.Append("\n- dramatis_personae: [全剧重要人物清单，每条含 name, role, location, relation_value]（可选）");
@@ -154,15 +157,14 @@ namespace ACLS.Authoring
                         int rel = n["relation_value"]?.Value<int>() ?? 0;
                         sb1.AppendLine($"· {name}（{role}，关系{rel:+#;-#;0}）：{stance}");
 
-                        // 注册到 GameDataLoader
-                        GameDataLoader.AddNpc(new NpcEntry
+                        // 注册到 GameMemory
+                        GameMemory.Instance.AddChar(new CharEntry
                         {
-                            Name = name,
-                            Role = role,
-                            RelationValue = rel,
-                            Stance = stance,
-                            Location = loc,
-                            Source = "l1_builder",
+                            name = name,
+                            role = role,
+                            relation = rel,
+                            location = loc,
+                            reachable_in_days = 0,
                         });
                     }
                 }
@@ -180,11 +182,11 @@ namespace ACLS.Authoring
                         {
                             sb1.Append(ex + "  ");
                             // 注册为地点
-                            GameDataLoader.AddLocation(new LocationEntry
+                            GameMemory.Instance.AddPlace(new PlaceEntry
                             {
-                                Name = ex,
-                                Type = "exit",
-                                Source = "l1_builder",
+                                name = ex,
+                                type = "exit",
+                                description = "",
                             });
                         }
                     }
@@ -201,38 +203,95 @@ namespace ACLS.Authoring
             {
                 var sb2 = new StringBuilder();
 
-                if (l2["near_contacts"] is JArray contacts)
+                string region = ((string)l2["region"] ?? "").Trim();
+                if (!string.IsNullOrWhiteSpace(region)) sb2.AppendLine(region);
+
+                // Environment
+                if (l2["environment"] is JObject env)
+                {
+                    string terrain = ((string)env["terrain"] ?? "").Trim();
+                    if (!string.IsNullOrWhiteSpace(terrain)) sb2.AppendLine(terrain);
+
+                    if (env["key_locations"] is JArray kl)
+                    {
+                        sb2.Append("关键地点：");
+                        foreach (var k in kl)
+                        {
+                            string kn = ((string)k["name"] ?? "").Trim();
+                            string kt = ((string)k["type"] ?? "").Trim();
+                            if (!string.IsNullOrWhiteSpace(kn))
+                            {
+                                sb2.Append($"{kn}（{kt}）  ");
+                                GameMemory.Instance.AddPlace(new PlaceEntry
+                                {
+                                    name = kn,
+                                    type = kt,
+                                    description = region,
+                                });
+                            }
+                        }
+                        sb2.AppendLine();
+                    }
+                }
+
+                // Contacts
+                if (l2["contacts"] is JArray contacts)
                 {
                     foreach (var c in contacts)
                     {
                         string name = ((string)c["name"] ?? "").Trim();
+                        if (string.IsNullOrWhiteSpace(name)) continue;
                         string cRole = ((string)c["role"] ?? "").Trim();
                         string cloc = ((string)c["location"] ?? "").Trim();
-                        int days = c["days_away"]?.Value<int>() ?? 0;
-                        if (!string.IsNullOrWhiteSpace(name))
+                        int rel = c["relation"]?.Value<int>() ?? 0;
+                        int days = c["reachable_in_days"]?.Value<int>() ?? 0;
+                        sb2.AppendLine($"· {name}（{cRole}，{cloc}，关系{rel:+#;-#;0}，约{days}天）");
+                        GameMemory.Instance.AddChar(new CharEntry
                         {
-                            sb2.AppendLine($"· {name}（{cRole}，{cloc}，约{days}天）");
-                            GameDataLoader.AddNpc(new NpcEntry
-                            {
-                                Name = name,
-                                Role = cRole,
-                                Location = cloc,
-                                DaysAway = days,
-                                Source = "l1_builder",
-                            });
-                        }
+                            name = name,
+                            role = cRole,
+                            location = cloc,
+                            relation = rel,
+                            reachable_in_days = days,
+                        });
                     }
                 }
 
-                if (l2["active_pressures"] is JArray pressures)
+                // Factions visible
+                if (l2["factions_visible"] is JArray factions)
                 {
-                    foreach (var p in pressures)
+                    foreach (var f in factions)
                     {
-                        string pt = ((string)p ?? "").Trim();
-                        if (!string.IsNullOrWhiteSpace(pt)) sb2.AppendLine($"⚠ {pt}");
+                        string fn = ((string)f["name"] ?? "").Trim();
+                        string ft = ((string)f["type"] ?? "").Trim();
+                        string fs = ((string)f["stance"] ?? "").Trim();
+                        if (string.IsNullOrWhiteSpace(fn)) continue;
+                        sb2.AppendLine($"▸ {fn}（{ft}）：{fs}");
+                        GameMemory.Instance.AddFaction(new FactionEntry
+                        {
+                            name = fn,
+                            type = ft,
+                            stance = fs,
+                        });
                     }
                 }
 
+                // Active events
+                if (l2["active_events"] is JArray events)
+                {
+                    foreach (var e in events)
+                    {
+                        string title = ((string)e["title"] ?? "").Trim();
+                        if (string.IsNullOrWhiteSpace(title)) continue;
+                        string urgency = ((string)e["urgency"] ?? "medium").Trim();
+                        string deadline = ((string)e["deadline"] ?? "ongoing").Trim();
+                        string detail = ((string)e["detail"] ?? "").Trim();
+                        string prefix = urgency == "high" ? "🔴" : urgency == "medium" ? "🟠" : "🟢";
+                        sb2.AppendLine($"{prefix} {title}（{deadline}）：{detail}");
+                    }
+                }
+
+                // Opportunities
                 if (l2["opportunities"] is JArray opps)
                 {
                     foreach (var o in opps)
@@ -253,7 +312,7 @@ namespace ACLS.Authoring
                     string date = ((string)m["date"] ?? "").Trim();
                     string evt = ((string)m["event"] ?? "").Trim();
                     if (!string.IsNullOrWhiteSpace(date) && !string.IsNullOrWhiteSpace(evt))
-                        GameMemory.Append(world, date, evt);
+                        NarrativeMemory.Append(world, date, evt);
                 }
             }
 
@@ -264,18 +323,18 @@ namespace ACLS.Authoring
                 {
                     string name = ((string)d["name"] ?? "").Trim();
                     if (string.IsNullOrWhiteSpace(name)) continue;
-                    GameDataLoader.AddNpc(new NpcEntry
+                    GameMemory.Instance.AddChar(new CharEntry
                     {
-                        Name = name,
-                        Role = ((string)d["role"] ?? "").Trim(),
-                        Location = ((string)d["location"] ?? "").Trim(),
-                        RelationValue = d["relation_value"]?.Value<int>() ?? 0,
-                        Source = "l1_builder",
+                        name = name,
+                        role = ((string)d["role"] ?? "").Trim(),
+                        location = ((string)d["location"] ?? "").Trim(),
+                        relation = d["relation_value"]?.Value<int>() ?? 0,
+                        reachable_in_days = 0,
                     });
                 }
             }
 
-            Log.Info(Log.Channels.Stage, "✅ L1Builder 完成 | L1长度={0} L2长度={1}",
+            Log.Info(Log.Channels.Stage, "[OK] L1Builder 完成 | L1长度={0} L2长度={1}",
                 world?.Stage.L1Stage?.Length ?? 0, world?.Stage.L2Arena?.Length ?? 0);
 
             return result;

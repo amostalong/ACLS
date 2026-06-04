@@ -4,6 +4,7 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 using ACLS.Authoring;
+using ACLS.Logging;
 using ACLS.Sim;
 
 namespace ACLS.UI
@@ -477,11 +478,11 @@ namespace ACLS.UI
                 $"特质：{ngPreset.TraitLabel}\n" +
                 $"背景：{ngPreset.CharBlurb}";
 
-            chat.StartWorldBuild(roleDesc, ngPreset.WorldBlurb, success =>
+            chat.StartWorldPipeline(roleDesc, ngPreset.WorldBlurb, success =>
             {
                 if (!success)
                 {
-                    Debug.LogWarning("[NewGame] WorldBuild failed, continuing with defaults");
+                    Log.Warn(Log.Channels.UI, "WorldPipeline failed, continuing with defaults");
                 }
 
                 stateMachine?.TransitionTo(GameState.Dialogue);
@@ -489,15 +490,8 @@ namespace ACLS.UI
                 var charPreset = NewGamePresets.ToCharacterPreset(ngPreset);
                 chat.ExpandCharacter(charPreset, _ =>
                 {
-                    if (success)
-                    {
-                        // WorldBuild 成功后，用 L1Builder（工具驱动）生成 L1 场景
-                        chat.StartL1Builder(__ => chat.StartOpening(charPreset));
-                    }
-                    else
-                    {
-                        chat.StartStageCreate(charPreset, __ => chat.StartOpening(charPreset));
-                    }
+                    // 流水线已完成 L1 场景构建，直接开始开场叙事
+                    chat.StartOpening(charPreset);
                 });
             });
         }
@@ -516,7 +510,7 @@ namespace ACLS.UI
             {
                 if (!success)
                 {
-                    Debug.LogWarning("[NewGame] Custom WorldBuild failed, continuing with defaults");
+                    Log.Warn(Log.Channels.UI, "WorldPipeline failed, continuing with defaults");
                 }
 
                 stateMachine?.TransitionTo(GameState.Dialogue);
@@ -550,8 +544,7 @@ namespace ACLS.UI
 
                     chat.ExpandCharacter(tempPreset, _ =>
                     {
-                        if (success) chat.StartL1Builder(__ => chat.StartOpening(tempPreset));
-                        else chat.StartOpening(tempPreset);
+                        chat.StartOpening(tempPreset);
                     });
                     return;
                 }

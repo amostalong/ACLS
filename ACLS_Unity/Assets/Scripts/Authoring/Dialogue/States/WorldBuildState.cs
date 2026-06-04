@@ -1,6 +1,11 @@
 using ACLS.Llm;
 using ACLS.Sim;
 using ACLS.Data;
+using ACLS.Logging;
+using System.IO;
+using System.Linq;
+using Newtonsoft.Json.Linq;
+using UnityEngine;
 
 namespace ACLS.Authoring
 {
@@ -35,10 +40,10 @@ namespace ACLS.Authoring
             var world = Orchestrator?.World;
             if (world != null)
             {
-                // WorldBuild 只写入 L4（宏观）和 L3（区域），L1/L2 由 L1Builder 后续生成
                 world.Stage.L4World   = wb.L4Text   ?? "";
                 world.Stage.L3Expanse = wb.L3Text   ?? "";
-                // L1Stage 和 L2Arena 暂不写入，由 L1Builder 通过工具读取 L4/L3/玩家状态后生成
+                // L2 由世界构建阶段写入，L1Builder 通过工具读取后可以增量更新
+                world.Stage.L2Arena   = wb.L2Text   ?? "";
 
                 if (world.Player == null && wb.Player != null)
                 {
@@ -69,8 +74,11 @@ namespace ACLS.Authoring
                 }
             }
 
-            // 仅注册 L4/L3 宏观实体，L1/L2 实体由 L1Builder 处理
-            RegisterMacroEntities(wb);
+            // 注册 L4/L3/L2 实体到 GameMemory
+            RegisterAllEntities(wb);
+
+            // Debug：将 L2 完整结构写入项目根目录，便于查看
+            DumpL2Debug(wb, rawResponse);
 
             result.Thinking = wb.Thinking ?? "";
             result.Narration = wb.Summary ?? wb.L4Text ?? "";
@@ -79,31 +87,124 @@ namespace ACLS.Authoring
 
         public override DialogueStateType? GetNextState(DialogueResult result) => null;
 
-        /// <summary>仅注册 L4（宏观势力）和 L3（区域势力）实体，供 lookup_* 工具查询。</summary>
-        private static void RegisterMacroEntities(WorldBuildReply wb)
+        /// <summary>注册 L4/L3/L2 实体，供 lookup_* 工具查询。</summary>
+        private static void RegisterAllEntities(WorldBuildReply wb)
         {
             if (wb == null) return;
+
+            // ---- L4 宏观势力 ----
             foreach (var f in wb.L4Factions)
             {
                 if (string.IsNullOrWhiteSpace(f.name)) continue;
-                GameDataLoader.AddFaction(new ACLS.Data.FactionEntry
+                GameMemory.Instance.AddFaction(new FactionEntry
                 {
-                    Name = f.name.Trim(),
-                    Status = (f.status ?? "").Trim(),
-                    Type = "macro",
-                    Source = "world_build",
+                    name = f.name.Trim(),
+                    stance = (f.status ?? "").Trim(),
+                    type = "macro",
                 });
             }
+
+            // ---- L3 区域势力 ----
             foreach (var p in wb.L3Powers)
             {
                 if (string.IsNullOrWhiteSpace(p.name)) continue;
-                GameDataLoader.AddFaction(new ACLS.Data.FactionEntry
+                GameMemory.Instance.AddFaction(new FactionEntry
                 {
-                    Name = p.name.Trim(),
-                    Status = (p.stance ?? "").Trim(),
-                    Type = "regional",
-                    Source = "world_build",
+                    name = p.name.Trim(),
+                    stance = (p.stance ?? "").Trim(),
+                    type = "regional",
                 });
+            }
+
+            // ---- L2  chars（人脉/关系人） ----
+            foreach (var c in wb.Chars)
+            {
+                if (string.IsNullOrWhiteSpace(c.name)) continue;
+                GameMemory.Instance.AddChar(new CharEntry
+                {
+                    name = c.name.Trim(),
+                    role = (c.role ?? "").Trim(),
+                    location = (c.location ?? "").Trim(),
+                    relation = c.relation,
+                    reachable_in_days = c.reachable_in_days,
+                });
+            }
+
+            // ---- L2  factions（可见势力/组织/家族） ----
+            foreach (var f in wb.Factions)
+            {
+                if (string.IsNullOrWhiteSpace(f.name)) continue;
+                GameMemory.Instance.AddFaction(new FactionEntry
+                {
+                    name = f.name.Trim(),
+                    stance = (f.stance ?? "").Trim(),
+                    type = (f.type ?? "").Trim(),
+                });
+            }
+
+            // ---- L2  places（关键地点） ----
+            foreach (var p in wb.Places)
+            {
+                if (string.IsNullOrWhiteSpace(p.name)) continue;
+                GameMemory.Instance.AddPlace(new PlaceEntry
+                {
+                    name = p.name.Trim(),
+                    type = (p.type ?? "").Trim(),
+                    description = "",
+                });
+            }
+        }
+
+        /// <summary>将 L2 完整结构写入项目根目录 Logs/，供开发时直接查看。</summary>
+        private static void DumpL2Debug(WorldBuildReply wb, string rawResponse)
+        {
+            try
+            {
+                string projectRoot = Application.dataPath + "/../";
+                string dir = Path.Combine(projectRoot, "Logs");
+                Directory.CreateDirectory(dir);
+
+                var dump = new JObject
+                {
+                    ["_raw_llm_response_length"] = rawResponse?.Length ?? 0,
+                    ["chars"] = JArray.FromObject(wb.Chars.Select(c => new JObject
+                    {
+                        ["name"] = c.name,
+                        ["role"] = c.role,
+                        ["location"] = c.location,
+                        ["relation"] = c.relation,
+                        ["reachable_in_days"] = c.reachable_in_days,
+                    })),
+                    ["factions"] = JArray.FromObject(wb.Factions.Select(f => new JObject
+                    {
+                        ["name"] = f.name,
+                        ["type"] = f.type,
+                        ["stance"] = f.stance,
+                    })),
+                    ["places"] = JArray.FromObject(wb.Places.Select(p => new JObject
+                    {
+                        ["name"] = p.name,
+                        ["type"] = p.type,
+                        ["description"] = p.description,
+                    })),
+                    ["active_events"] = JArray.FromObject(wb.ActiveEvents.Select(e => new JObject
+                    {
+                        ["title"] = e.title,
+                        ["urgency"] = e.urgency,
+                        ["deadline"] = e.deadline,
+                        ["detail"] = e.detail,
+                    })),
+                    ["opportunities"] = JArray.FromObject(wb.Opportunities),
+                    ["_formatted_l2_text"] = wb.L2Text ?? "",
+                };
+
+                string path = Path.Combine(dir, "worldbuild_l2.json");
+                File.WriteAllText(path, dump.ToString(Newtonsoft.Json.Formatting.Indented));
+                Log.Info(Log.Channels.WorldBuild, "L2 dump → {0}", path);
+            }
+            catch (System.Exception ex)
+            {
+                Log.Warn(Log.Channels.WorldBuild, "L2 dump 写入失败: {0}", ex.Message);
             }
         }
     }

@@ -152,7 +152,11 @@ namespace ACLS.Authoring
                 "返回严格 JSON，顶层字段：" +
                 "thinking（你的推理过程，原样输出，尽量先输出该字段），" +
                 "l1_stage{location, scene_description, active_npcs:[{name,role,relation_value,stance}], immediate_situation, exits:[]}，" +
-                "l2_arena{near_contacts:[{name,role,location,days_away}], active_pressures:[], opportunities:[]}。" +
+                "l2_arena{" +
+                "chars:[{name,role,location,relation,reachable_in_days}], " +
+                "factions:[{name,type,stance}], " +
+                "places:[{name,type,description}], " +
+                "active_events:[{title,urgency(high|medium|low),deadline,detail}], opportunities:[]}。" +
                 "不要 JSON 之外的文字（含 ``` 围栏）。",
 
             DialogueStateType.ActorCreation =>

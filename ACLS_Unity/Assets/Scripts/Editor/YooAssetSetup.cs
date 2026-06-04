@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Reflection;
+using ACLS.Logging;
 using UnityEditor;
 using UnityEngine;
 using YooAsset.Editor;
@@ -39,15 +40,15 @@ namespace ACLS.Editor
             EnsureDirectories();
 
             AssetDatabase.Refresh();
-            Debug.Log("[YooAssetSetup] 资源目录结构已创建。请在 YooAsset 窗口中配置 Package / Group。");
-            Debug.Log("[YooAssetSetup] 菜单路径：YooAsset → AssetBundle Collector");
+            Log.Info(Log.Channels.Content, "资源目录结构已创建。请在 YooAsset 窗口中配置 Package / Group。");
+            Log.Info(Log.Channels.Content, "菜单路径：YooAsset → AssetBundle Collector");
         }
 
         [MenuItem("ACLS/YooAsset/打开 Collector")]
         public static void OpenCollector()
         {
             if (!EditorApplication.ExecuteMenuItem("YooAsset/AssetBundle Collector"))
-                Debug.LogError("[YooAssetSetup] 未找到 YooAsset/AssetBundle Collector 菜单项。请确认 YooAsset 已正确安装并完成包解析。");
+                Log.Error(Log.Channels.Content, "未找到 YooAsset/AssetBundle Collector 菜单项。请确认 YooAsset 已正确安装并完成包解析。");
         }
 
         [MenuItem("ACLS/YooAsset/校验必需资源")]
@@ -70,12 +71,12 @@ namespace ACLS.Editor
                 if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path) == null)
                 {
                     ok = false;
-                    Debug.LogError($"[YooAssetSetup] 缺少资源：{path}");
+                    Log.Error(Log.Channels.Content, "缺少资源：{0}", path);
                 }
             }
 
             if (ok)
-                Debug.Log("[YooAssetSetup] 必需资源齐全。");
+                Log.Info(Log.Channels.Content, "必需资源齐全。");
         }
 
         [MenuItem("ACLS/YooAsset/构建 Dev（当前平台）")]
@@ -138,7 +139,7 @@ namespace ACLS.Editor
             EditorUtility.SetDirty(setting);
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
-            Debug.Log($"[YooAssetSetup] 已创建 {DefaultPackageName} 的 Collector 配置：Assets/BundleCollectorSetting.asset");
+            Log.Info(Log.Channels.Content, "已创建 {0} 的 Collector 配置：Assets/BundleCollectorSetting.asset", DefaultPackageName);
         }
 
         private static BundleCollectorGroup CreateGroup(string groupName, string tags, BundleCollector collector)
@@ -176,13 +177,13 @@ namespace ACLS.Editor
             var buildParams = TryCreateBuildParameters(outputRoot, target, packageName);
             if (buildParams != null && TryInvokeYooAssetBuild(buildParams))
             {
-                Debug.Log($"[YooAssetSetup] 构建请求已触发：{outputRoot}");
+                Log.Info(Log.Channels.Content, "构建请求已触发：{0}", outputRoot);
                 return;
             }
 
-            Debug.LogWarning("[YooAssetSetup] 未能通过反射触发构建，将打开 YooAsset Builder 窗口，请在窗口中手动点击 Build。");
+            Log.Warn(Log.Channels.Content, "未能通过反射触发构建，将打开 YooAsset Builder 窗口，请在窗口中手动点击 Build。");
             if (!EditorApplication.ExecuteMenuItem("YooAsset/AssetBundle Builder"))
-                Debug.LogError("[YooAssetSetup] 未找到 YooAsset/AssetBundle Builder 菜单项。");
+                Log.Error(Log.Channels.Content, "未找到 YooAsset/AssetBundle Builder 菜单项。");
         }
 
         private static object TryCreateBuildParameters(string outputRoot, BuildTarget target, string packageName)
@@ -190,7 +191,7 @@ namespace ACLS.Editor
             var type = FindType("YooAsset.Editor.ScriptableBuildParameters");
             if (type == null)
             {
-                Debug.LogError("[YooAssetSetup] 未找到 YooAsset.Editor.ScriptableBuildParameters。请确认 YooAsset Editor 程序集已正确导入并完成包解析。");
+                Log.Error(Log.Channels.Content, "未找到 YooAsset.Editor.ScriptableBuildParameters。请确认 YooAsset Editor 程序集已正确导入并完成包解析。");
                 return null;
             }
 
@@ -236,7 +237,7 @@ namespace ACLS.Editor
             }
             catch (Exception e)
             {
-                Debug.LogError($"[YooAssetSetup] 触发构建失败：{e.Message}");
+                Log.Error(Log.Channels.Content, "触发构建失败：{0}", e.Message);
                 return false;
             }
         }

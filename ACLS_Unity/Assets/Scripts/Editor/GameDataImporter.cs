@@ -1,7 +1,9 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using ACLS.Authoring;
 using ACLS.Data;
+using ACLS.Logging;
 using UnityEditor;
 using UnityEngine;
 
@@ -17,6 +19,16 @@ namespace ACLS.Editor
     {
         private const string AIGameMemoryPath = "../../../OneDrive/WorkingWithAI/AIGame/memory";
         private const string OutputDir = "Assets/Resources/Content/";
+
+        [MenuItem("ACLS/删除存档", false, 200)]
+        public static void DeleteSave()
+        {
+            if (EditorUtility.DisplayDialog("删除存档", "确定删除所有存档数据？", "删除", "取消"))
+            {
+                Authoring.SaveManager.DeleteSlot("slot0");
+                Debug.Log("存档已删除");
+            }
+        }
 
         [MenuItem("ACLS/Import Game Data from AIGame", false, 100)]
         public static void Import()
@@ -39,7 +51,7 @@ namespace ACLS.Editor
             int locs  = ImportOne<LocationDB>("LocationDB", Path.Combine(aigameMemory, "PLACES"), "P");
 
             AssetDatabase.SaveAssets();
-            Debug.Log($"[GameDataImporter] ✅ 导入完成: 人物={chars} 势力={facs} 地点={locs}");
+            Log.Info(Log.Channels.Content, "导入完成: 人物={0} 势力={1} 地点={2}", chars, facs, locs);
         }
 
         private static int ImportOne<T>(string assetName, string mdDir, string prefix) where T : ScriptableObject
@@ -61,7 +73,7 @@ namespace ACLS.Editor
 
             if (!Directory.Exists(mdDir))
             {
-                Debug.LogWarning($"[GameDataImporter] 目录不存在: {mdDir}");
+                Log.Warn(Log.Channels.Content, "目录不存在: {0}", mdDir);
                 return 0;
             }
 

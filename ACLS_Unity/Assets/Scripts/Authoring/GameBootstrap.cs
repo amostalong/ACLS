@@ -1,6 +1,7 @@
 using UnityEngine;
 using ACLS.Data;
 using ACLS.Llm;
+using ACLS.Logging;
 using ACLS.Sim;
 using Cysharp.Threading.Tasks;
 
@@ -39,17 +40,47 @@ namespace ACLS.Authoring
 
             await YooAssetBootstrapper.InitializeAsync();
 
-            // 加载游戏数据库（人物/势力/地点）
+            // ═══ Editor only: 自动删除存档开关 ═══
+#if UNITY_EDITOR
+            if (UnityEditor.EditorPrefs.GetBool("ACLS_AutoDeleteSave", false))
+                SaveManager.DeleteSlot("slot0");
+#endif
+
+            // 1. 先检查存档——日志会先输出
+            bool hasSave = SaveManager.SlotExists();
+            SaveData saveData = null;
+            if (hasSave)
+            {
+                SaveManager.TryLoad("slot0", out saveData);
+                if (saveData?.World == null)
+                {
+                    Log.Warn(Log.Channels.System, "存档加载失败，按新建游戏流程走");
+                    hasSave = false;
+                }
+            }
+
+            // 2. 加载游戏数据库（人物/势力/地点）——有无存档都需要，供 lookup 工具查询
             GameDataLoader.Init();
 
+            // 3. 注册系统组件（Traits / Events / Localization）——两边共享
             WorldFactory.RegisterPlaceholderLocalization();
 
             Registry.Clear();
             foreach (var t in WorldFactory.BuildPlaceholderTraits()) Registry.Register(t);
             foreach (var e in WorldFactory.BuildPlaceholderEvents()) Registry.Register(e);
 
-            world = WorldFactory.BuildPlaceholderWorld();
+            // 4. 构建或恢复世界
+            if (hasSave && saveData != null)
+            {
+                world = saveData.World;
+                Log.Info(Log.Channels.System, "从存档恢复世界: player={0}", world.Player?.Name ?? "(null)");
+            }
+            else
+            {
+                world = WorldFactory.BuildPlaceholderWorld();
+            }
 
+            // 5. 共用基础设施
             clock = gameObject.AddComponent<GameClockDriver>();
             clock.Bind(world);
 
@@ -66,8 +97,19 @@ namespace ACLS.Authoring
             stateMachine = new GameStateMachine(world, chat, promptSelector);
             chat.StateMachine = stateMachine;
 
+            // 7. UI
             UiBuilder.Build(world, clock, chat, stateMachine);
-            stateMachine.TransitionTo(GameState.WorldSelection);
+
+            // 8. 跳转到正确的状态
+            if (hasSave)
+            {
+                stateMachine.TransitionTo(GameState.Dialogue);
+                // TODO: 通知 LLM 继续（恢复上下文后让 LLM 重新生成当前场景叙述）
+            }
+            else
+            {
+                stateMachine.TransitionTo(GameState.WorldSelection);
+            }
 
             world.Paused = true;
         }
@@ -93,7 +135,7 @@ namespace ACLS.Authoring
                 return (null, $"当前激活 Profile「{cfg.Active.ProfileName}」未填完整：缺 {missing}");
             }
             string baseUrlForLog = string.IsNullOrWhiteSpace(cfg.BaseUrl) ? "(default)" : cfg.BaseUrl;
-            Debug.Log($"[ACLS] LlmConfig loaded: profile={cfg.Active.ProfileName}, provider={cfg.Provider}, model={cfg.Model}, baseUrl={baseUrlForLog}, keyLen={cfg.ApiKey?.Length ?? 0}");
+            Log.Info(Log.Channels.System, "LlmConfig loaded: profile={0}, provider={1}, model={2}, baseUrl={3}, keyLen={4}", cfg.Active.ProfileName, cfg.Provider, cfg.Model, baseUrlForLog, cfg.ApiKey?.Length ?? 0);
             ILlmClient client = cfg.Provider switch
             {
                 LlmProvider.Anthropic => new AnthropicClient(cfg.BaseUrl, cfg.ApiKey, cfg.Model, cfg.MaxTokens, cfg.VerboseLogging),
@@ -117,7 +159,7 @@ namespace ACLS.Authoring
             cfg.WorldCreatePromptMd = expMd ?? CreateInlineTextAsset("CharacterExpansion.md", BuiltInExpansionPrompt());
 
             if (sysMd == null || expMd == null)
-                Debug.Log("[ACLS] 未找到 Resources/Prompts/*.md，使用内置默认提示词。建议在 Resources/Prompts/ 下放 .md 文件以便自定义。");
+                Log.Info(Log.Channels.System, "未找到 Resources/Prompts/*.md，使用内置默认提示词。建议在 Resources/Prompts/ 下放 .md 文件以便自定义。");
 
             return cfg;
         }

@@ -100,8 +100,8 @@ namespace ACLS.Authoring
             var ngView = ngGo.AddComponent<NewGameView>();
             ngView.Bind(world, chat, stateMachine);
 
-            // 无存档 → 显示 NewGameView；有存档 → TODO: 跳转到继续游戏界面
-            if (world.Player == null && !SaveManager.SlotExists())
+            // 无存档时显示 NewGameView（有存档时在 BootAsync 中已恢复世界，Player 非空）
+            if (world.Player == null)
                 ngView.SetVisible(true);
 
             // 旧视图保留供参考，但不参与流程（可安全删除）。

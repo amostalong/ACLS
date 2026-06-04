@@ -50,7 +50,7 @@ namespace ACLS.Llm.Tools
             if (count <= 0) count = 10;
             if (count > 50) count = 50;
 
-            string result = GameMemory.ReadRecent(world, count);
+            string result = NarrativeMemory.ReadRecent(world, count);
             return Task.FromResult(result);
         }
     }

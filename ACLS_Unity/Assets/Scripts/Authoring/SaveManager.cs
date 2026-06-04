@@ -1,8 +1,8 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Text;
-using ACLS.Llm;
+using ACLS.Data;
+using ACLS.Logging;
 using ACLS.Sim;
 using Newtonsoft.Json;
 using UnityEngine;
@@ -16,17 +16,17 @@ namespace ACLS.Authoring
             NullValueHandling = NullValueHandling.Ignore,
         };
 
-        public static void Save(World world, ChatHistory history, string slot = "slot0")
+        public static void Save(World world, GameMemory memory, string slot = "slot0")
         {
             var data = new SaveData
             {
                 World = world,
-                History = new List<ChatMessage>(history.All),
+                Memory = memory,
             };
             string json = JsonConvert.SerializeObject(data, Settings);
             string path = SlotPath(slot);
             File.WriteAllText(path, json, Encoding.UTF8);
-            Debug.Log($"[SaveManager] saved → {path}");
+            Log.Info(Log.Channels.Save, "saved → {0}", path);
         }
 
         public static bool TryLoad(string slot, out SaveData data)
@@ -38,16 +38,28 @@ namespace ACLS.Authoring
             {
                 string json = File.ReadAllText(path, Encoding.UTF8);
                 data = JsonConvert.DeserializeObject<SaveData>(json, Settings);
-                return data?.World != null;
+                if (data?.World != null)
+                {
+                    // 恢复运行时单例
+                    GameMemory.Instance = data.Memory ?? new GameMemory();
+                    return true;
+                }
+                return false;
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[SaveManager] load failed: {ex.Message}");
+                Log.Error(Log.Channels.Save, "load failed: {0}", ex.Message);
                 return false;
             }
         }
 
-        public static bool SlotExists(string slot = "slot0") => File.Exists(SlotPath(slot));
+        public static bool SlotExists(string slot = "slot0")
+        {
+            string path = SlotPath(slot);
+            bool exists = File.Exists(path);
+            Log.Info(Log.Channels.Save, "存档检查: slot={0} path={1} exists={2}", slot, path, exists);
+            return exists;
+        }
 
         public static void DeleteSlot(string slot = "slot0")
         {

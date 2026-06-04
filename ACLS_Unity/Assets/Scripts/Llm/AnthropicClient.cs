@@ -7,6 +7,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using ACLS.Llm.Tools;
+using ACLS.Logging;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
@@ -54,7 +55,7 @@ namespace ACLS.Llm
             };
 
             string json = JsonConvert.SerializeObject(body);
-            if (verbose) Debug.Log($"[Anthropic] → {json}");
+            if (verbose) Log.Info(Log.Channels.Network, "[Anthropic] → {0}", json);
 
             using var req = new HttpRequestMessage(HttpMethod.Post, endpoint);
             req.Headers.TryAddWithoutValidation("Authorization", $"Bearer {apiKey}");
@@ -64,7 +65,7 @@ namespace ACLS.Llm
             using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
             string respText = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
 
-            if (verbose) Debug.Log($"[Anthropic] ← {(int)resp.StatusCode} {Truncate(respText, 300)}");
+            if (verbose) Log.Info(Log.Channels.Network, "[Anthropic] ← {0} {1}", (int)resp.StatusCode, Truncate(respText, 300));
             LlmDebugLog.Add("Anthropic", json, respText);
 
             if (!resp.IsSuccessStatusCode)
@@ -90,7 +91,7 @@ namespace ACLS.Llm
             };
 
             string json = JsonConvert.SerializeObject(body);
-            if (verbose) Debug.Log($"[Anthropic] → {Truncate(json, 300)}");
+            if (verbose) Log.Info(Log.Channels.Network, "[Anthropic] → {0}", Truncate(json, 8196));
 
             return await StreamAnthropic(json, onTextDelta, ct);
         }
@@ -118,7 +119,7 @@ namespace ACLS.Llm
                 bodyObj["tools"] = BuildAnthropicTools(tools);
 
             string json = bodyObj.ToString(Formatting.None);
-            if (verbose) Debug.Log($"[Anthropic] → (tools={tools?.Count ?? 0}) {Truncate(json, 300)}");
+            if (verbose) Log.Info(Log.Channels.Network, "[Anthropic] → (tools={0}) {1}", tools?.Count ?? 0, Truncate(json, 300));
 
             return await StreamAnthropic(json, onTextDelta, ct);
         }
@@ -138,7 +139,7 @@ namespace ACLS.Llm
             if (!resp.IsSuccessStatusCode)
             {
                 string err = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
-                if (verbose) Debug.Log($"[Anthropic] ← {(int)resp.StatusCode} {Truncate(err, 300)}");
+                if (verbose) Log.Info(Log.Channels.Network, "[Anthropic] ← {0} {1}", (int)resp.StatusCode, Truncate(err, 300));
                 LlmDebugLog.Add("Anthropic", requestJson, err);
                 throw new HttpRequestException($"Anthropic {(int)resp.StatusCode}: {Truncate(err, 500)}");
             }

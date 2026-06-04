@@ -1,83 +1,120 @@
 using System;
-using System.Text;
-using ACLS.Sim;
-using Newtonsoft.Json.Linq;
+using System.Collections.Generic;
+using Newtonsoft.Json;
 
 namespace ACLS.Data
 {
     /// <summary>
-    /// 叙事记忆系统。以 string-JSON 格式存储在 World.MemoryJson 上。
-    /// 格式：{"entries":[{"date":"中平二年·七月","event":"玩家抵达武阳..."},...]}
+    /// 运行时游戏记忆容器。
+    /// 持有 LLM 构建的全部动态实体数据（L2 chars/factions/places/events/opportunities），
+    /// 同时也是存档的序列化单元。
     ///
-    /// 当前为纯文本 JSON，后续可升级为结构化存储。
+    /// 查询时优先查动态数据，找不到再 fallback 到 GameDataLoader 的静态 SO 数据。
     /// </summary>
-    public static class GameMemory
+    [Serializable]
+    public sealed class GameMemory
     {
-        private static JObject Parse(string json)
+        // ──── L2 实体列表（与 WorldBuildReply 的 L2 结构对齐） ────
+        public List<CharEntry> Chars = new List<CharEntry>();
+        public List<FactionEntry> Factions = new List<FactionEntry>();
+        public List<PlaceEntry> Places = new List<PlaceEntry>();
+        public List<EventEntry> ActiveEvents = new List<EventEntry>();
+        public List<string> Opportunities = new List<string>();
+
+        // ──── 注册（去重：同名忽略） ────
+
+        public void AddChar(CharEntry entry)
         {
-            if (string.IsNullOrWhiteSpace(json)) return EmptyObj();
-            try
+            if (entry == null || string.IsNullOrWhiteSpace(entry.name)) return;
+            string key = entry.name.Trim();
+            if (FindChar(key) != null) return;
+            entry.name = key;
+            Chars.Add(entry);
+        }
+
+        public void AddFaction(FactionEntry entry)
+        {
+            if (entry == null || string.IsNullOrWhiteSpace(entry.name)) return;
+            string key = entry.name.Trim();
+            if (FindFactionEntry(key) != null) return;
+            entry.name = key;
+            Factions.Add(entry);
+        }
+
+        public void AddPlace(PlaceEntry entry)
+        {
+            if (entry == null || string.IsNullOrWhiteSpace(entry.name)) return;
+            string key = entry.name.Trim();
+            if (FindPlaceEntry(key) != null) return;
+            entry.name = key;
+            Places.Add(entry);
+        }
+
+        // ──── 查询（返回格式化文本，供 LLM 工具使用） ────
+
+        public string FindCharacter(string name)
+        {
+            var entry = FindChar(name);
+            if (entry != null) return entry.ToLlmText();
+            // fallback 到静态 SO
+            return GameDataLoader.FindCharacterStatic(name);
+        }
+
+        public string FindFaction(string name)
+        {
+            var entry = FindFactionEntry(name);
+            if (entry != null) return entry.ToLlmText();
+            return GameDataLoader.FindFactionStatic(name);
+        }
+
+        public string FindPlace(string name)
+        {
+            var entry = FindPlaceEntry(name);
+            if (entry != null) return entry.ToLlmText();
+            return GameDataLoader.FindLocationStatic(name);
+        }
+
+        // ──── 内部查找（返回原始对象） ────
+
+        private CharEntry FindChar(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return null;
+            string key = name.Trim();
+            for (int i = 0; i < Chars.Count; i++)
             {
-                var obj = JObject.Parse(json);
-                if (obj["entries"] == null)
-                    obj["entries"] = new JArray();
-                return obj;
+                if (string.Equals(Chars[i].name, key, StringComparison.OrdinalIgnoreCase))
+                    return Chars[i];
             }
-            catch { return EmptyObj(); }
+            return null;
         }
 
-        private static JObject EmptyObj()
+        private FactionEntry FindFactionEntry(string name)
         {
-            var o = new JObject();
-            o["entries"] = new JArray();
-            return o;
-        }
-
-        /// <summary>追加一条记忆事件。</summary>
-        public static void Append(World world, string date, string eventText)
-        {
-            if (world == null) return;
-            var obj = Parse(world.MemoryJson);
-            var entries = obj["entries"] as JArray;
-            if (entries == null)
+            if (string.IsNullOrWhiteSpace(name)) return null;
+            string key = name.Trim();
+            for (int i = 0; i < Factions.Count; i++)
             {
-                entries = new JArray();
-                obj["entries"] = entries;
+                if (string.Equals(Factions[i].name, key, StringComparison.OrdinalIgnoreCase))
+                    return Factions[i];
             }
-            entries.Add(new JObject
-            {
-                ["date"] = date ?? "",
-                ["event"] = eventText ?? "",
-            });
-            world.MemoryJson = obj.ToString(Newtonsoft.Json.Formatting.None);
+            return null;
         }
 
-        /// <summary>读取最近 N 条记忆，返回格式化文本供 LLM 使用。</summary>
-        public static string ReadRecent(World world, int count = 10)
+        private PlaceEntry FindPlaceEntry(string name)
         {
-            if (world == null) return "(无记忆)";
-            var obj = Parse(world.MemoryJson);
-            var entries = obj["entries"] as JArray;
-            if (entries == null || entries.Count == 0) return "(无记忆)";
-
-            var sb = new StringBuilder();
-            int start = Math.Max(0, entries.Count - count);
-            for (int i = start; i < entries.Count; i++)
+            if (string.IsNullOrWhiteSpace(name)) return null;
+            string key = name.Trim();
+            for (int i = 0; i < Places.Count; i++)
             {
-                var e = entries[i];
-                string d = (string)e["date"] ?? "";
-                string ev = (string)e["event"] ?? "";
-                sb.AppendLine($"· [{d}] {ev}");
+                if (string.Equals(Places[i].name, key, StringComparison.OrdinalIgnoreCase))
+                    return Places[i];
             }
-            return sb.ToString().TrimEnd();
+            return null;
         }
 
-        /// <summary>获取所有记忆的原始 JSON。</summary>
-        public static string GetAllRaw(World world)
-        {
-            if (world == null) return "{}";
-            var obj = Parse(world.MemoryJson);
-            return obj.ToString(Newtonsoft.Json.Formatting.None);
-        }
+        // ──── 单例（运行时可访问，存档时替换） ────
+
+        [JsonIgnore]
+        public static GameMemory Instance { get; internal set; } = new GameMemory();
     }
 }

@@ -14,6 +14,7 @@ namespace ACLS.Sim
     public sealed class WorldStageData
     {
         public string WorldDescription = "";  // player's world choice (preset blurb or custom text)
+        public string WorldBuild = "";       // World: era, narrative style, cognitive boundaries, anchors (step 1 output)
         public string L4World   = "";         // macro: era, factions, history anchors
         public string L3Expanse = "";         // regional: power distribution, indirect intel
         public string L2Arena   = "";         // near: 3-14 day contacts, active pressures, opportunities

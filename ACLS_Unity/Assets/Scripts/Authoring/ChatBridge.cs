@@ -169,6 +169,18 @@ namespace ACLS.Authoring
             });
         }
 
+        // 5-step pipeline: WorldBuild → L4Build → L3Build → L2Build → L1Build.
+        public void StartWorldPipeline(string roleDescription, string worldDescription, Action<bool> onComplete)
+        {
+            if (!Ready) { onComplete?.Invoke(false); return; }
+            orchestrator?.StartWorldPipeline(roleDescription ?? "", worldDescription ?? "", success =>
+            {
+                // Pipeline includes L1 already — no separate StartL1Builder needed.
+                if (success) orchestrator?.TransitionTo(DialogueStateType.StagePlay);
+                onComplete?.Invoke(success);
+            });
+        }
+
         // Called once after WorldBuild to generate L1 scene using tool-based L1Builder.
         public void StartL1Builder(Action<bool> onComplete)
         {

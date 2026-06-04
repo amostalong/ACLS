@@ -47,7 +47,7 @@ namespace ACLS.Llm.Tools
             if (string.IsNullOrWhiteSpace(name))
                 return Task.FromResult("缺少必要参数：name（地点名称）。");
 
-            var result = GameDataLoader.FindLocation(name.Trim());
+            var result = GameMemory.Instance.FindPlace(name.Trim());
             if (result == null)
                 return Task.FromResult($"未找到地点「{name.Trim()}」的档案。");
 

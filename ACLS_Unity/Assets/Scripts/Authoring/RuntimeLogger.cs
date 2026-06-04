@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Text;
+using ACLS.Logging;
 using UnityEngine;
 
 namespace ACLS.Authoring
@@ -54,12 +55,12 @@ namespace ACLS.Authoring
                 Application.quitting += OnQuit;
 
                 // Surface the path so I can find it from the editor console too.
-                Debug.Log($"[RuntimeLogger] writing to {LogPath}");
+                Log.Info(Log.Channels.System, "writing to {0}", LogPath);
             }
             catch (Exception ex)
             {
                 // Don't cascade: fall back to console-only.
-                Debug.LogError($"[RuntimeLogger] init failed: {ex}");
+                Log.Error(Log.Channels.System, "init failed: {0}", ex);
                 writer = null;
             }
         }

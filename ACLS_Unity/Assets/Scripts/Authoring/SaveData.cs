@@ -1,13 +1,12 @@
-using System.Collections.Generic;
-using ACLS.Llm;
+using ACLS.Data;
 using ACLS.Sim;
 
 namespace ACLS.Authoring
 {
     public sealed class SaveData
     {
-        public string Version = "1";
+        public string Version = "2";
         public World World;
-        public List<ChatMessage> History;
+        public GameMemory Memory;
     }
 }

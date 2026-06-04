@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using ACLS.Logging;
 using UnityEngine;
 using YooAsset;
 using Cysharp.Threading.Tasks;
@@ -26,7 +27,7 @@ namespace ACLS.Authoring
                     CacheHandle(location, handle);
                     return handle.GetAssetObject<T>();
                 }
-                Debug.LogError($"[ContentLoader] YooAsset load failed: location={location}");
+                Log.Error(Log.Channels.Content, "YooAsset load failed: location={0}", location);
                 handle.Dispose();
             }
 
@@ -62,7 +63,7 @@ namespace ACLS.Authoring
                     CacheHandle(location, handle);
                     return handle.GetAssetObject<T>();
                 }
-                Debug.LogError($"[ContentLoader] YooAsset load failed: location={location}");
+                Log.Error(Log.Channels.Content, "YooAsset load failed: location={0}", location);
                 handle.Dispose();
             }
 

@@ -18,8 +18,10 @@ namespace ACLS.Llm
     //     "exits": ["北往洛阳 约3天", "东往许县 约2天"]
     //   },
     //   "l2_arena": {
-    //     "near_contacts": [{"name":"...","role":"...","location":"...","days_away":1}],
-    //     "active_pressures": ["..."],
+    //     "chars": [{"name":"...","role":"...","location":"...","relation":0,"reachable_in_days":1}],
+    //     "factions": [{"name":"...","type":"...","stance":"..."}],
+    //     "places": [{"name":"...","type":"...","description":"..."}],
+    //     "active_events": [{"title":"...","urgency":"high|medium|low","deadline":"...","detail":"..."}],
     //     "opportunities": ["..."]
     //   }
     // }
@@ -111,25 +113,72 @@ namespace ACLS.Llm
             if (l2 != null)
             {
                 var sb2 = new StringBuilder();
-                if (l2["near_contacts"] is JArray contacts)
+
+                // Chars
+                if (l2["chars"] is JArray chars)
                 {
-                    foreach (var c in contacts)
+                    sb2.AppendLine("【人物】");
+                    foreach (var c in chars)
                     {
                         string name = ((string)c["name"] ?? "").Trim();
+                        if (string.IsNullOrWhiteSpace(name)) continue;
                         string role  = ((string)c["role"] ?? "").Trim();
                         string cloc  = ((string)c["location"] ?? "").Trim();
-                        int days = c["days_away"]?.Value<int>() ?? 0;
-                        if (!string.IsNullOrWhiteSpace(name))
-                            sb2.AppendLine($"· {name}（{role}，{cloc}，约{days}天）");
+                        int rel = c["relation"]?.Value<int>() ?? 0;
+                        int days = c["reachable_in_days"]?.Value<int>() ?? 0;
+                        sb2.AppendLine($"· {name}（{role}，{cloc}，关系{rel:+#;-#;0}，约{days}天）");
                     }
                 }
-                if (l2["active_pressures"] is JArray pressures)
+
+                // Factions
+                if (l2["factions"] is JArray factions)
                 {
-                    foreach (var p in pressures) sb2.AppendLine($"⚠ {(string)p}");
+                    sb2.AppendLine("【势力】");
+                    foreach (var f in factions)
+                    {
+                        string fn = ((string)f["name"] ?? "").Trim();
+                        if (string.IsNullOrWhiteSpace(fn)) continue;
+                        sb2.AppendLine($"▸ {fn}（{((string)f["type"] ?? "")}）：{((string)f["stance"] ?? "")}");
+                    }
                 }
+
+                // Places
+                if (l2["places"] is JArray places)
+                {
+                    sb2.AppendLine("【地点】");
+                    foreach (var p in places)
+                    {
+                        string pn = ((string)p["name"] ?? "").Trim();
+                        if (string.IsNullOrWhiteSpace(pn)) continue;
+                        sb2.AppendLine($"· {pn}（{((string)p["type"] ?? "")}）：{((string)p["description"] ?? "")}");
+                    }
+                }
+
+                // Active events
+                if (l2["active_events"] is JArray events)
+                {
+                    sb2.AppendLine("【事件】");
+                    foreach (var e in events)
+                    {
+                        string title = ((string)e["title"] ?? "").Trim();
+                        if (string.IsNullOrWhiteSpace(title)) continue;
+                        string urgency = ((string)e["urgency"] ?? "medium").Trim();
+                        string deadline = ((string)e["deadline"] ?? "ongoing").Trim();
+                        string detail = ((string)e["detail"] ?? "").Trim();
+                        string prefix = urgency == "high" ? "🔴" : urgency == "medium" ? "🟠" : "🟢";
+                        sb2.AppendLine($"{prefix} {title}（{deadline}）：{detail}");
+                    }
+                }
+
+                // Opportunities
                 if (l2["opportunities"] is JArray opps)
                 {
-                    foreach (var o in opps) sb2.AppendLine($"◇ {(string)o}");
+                    sb2.AppendLine("【机遇】");
+                    foreach (var o in opps)
+                    {
+                        string ot = ((string)o ?? "").Trim();
+                        if (!string.IsNullOrWhiteSpace(ot)) sb2.AppendLine($"◇ {ot}");
+                    }
                 }
                 result.L2Text = sb2.ToString().Trim();
             }

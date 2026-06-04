@@ -1,4 +1,5 @@
 using System;
+using ACLS.Logging;
 using Cysharp.Threading.Tasks;
 using UnityEngine;
 using YooAsset;
@@ -36,7 +37,7 @@ namespace ACLS.Authoring
             get
             {
                 if (_defaultPackage == null)
-                    Debug.LogError($"[YooAsset] 默认包（{DefaultPackageName}）尚未初始化。请先调用 InitializeAsync()。");
+                    Log.Error(Log.Channels.Content, "默认包（{0}）尚未初始化。请先调用 InitializeAsync()。", DefaultPackageName);
                 return _defaultPackage;
             }
         }
@@ -49,7 +50,7 @@ namespace ACLS.Authoring
         {
             if (IsInitialized)
             {
-                Debug.Log("[YooAsset] 已初始化，跳过。");
+                Log.Info(Log.Channels.Content, "已初始化，跳过。");
                 return;
             }
 
@@ -63,19 +64,19 @@ namespace ACLS.Authoring
             bool ok = await AwaitOperationSucceed(initOper);
             if (!ok)
             {
-                Debug.LogError($"[YooAsset] 初始化失败：{GetError(initOper)}");
+                Log.Error(Log.Channels.Content, "初始化失败：{0}", GetError(initOper));
                 return;
             }
 
             ok = await EnsureManifestLoadedAsync(_defaultPackage, packageVersion, appendTimeTicks: false);
             if (!ok)
             {
-                Debug.LogError("[YooAsset] 加载清单失败。");
+                Log.Error(Log.Channels.Content, "加载清单失败。");
                 return;
             }
 
             IsInitialized = true;
-            Debug.Log($"[YooAsset] 初始化完成（{playMode}）");
+            Log.Info(Log.Channels.Content, "初始化完成（{0}）", playMode);
         }
 
         /// <summary>
@@ -86,7 +87,7 @@ namespace ACLS.Authoring
         {
             if (_defaultPackage == null)
             {
-                Debug.LogError("[YooAsset] 默认包未创建，无法切换模式。");
+                Log.Error(Log.Channels.Content, "默认包未创建，无法切换模式。");
                 return;
             }
 
@@ -106,19 +107,19 @@ namespace ACLS.Authoring
             bool ok = await AwaitOperationSucceed(initOp);
             if (!ok)
             {
-                Debug.LogError($"[YooAsset] 切换联机模式失败：{GetError(initOp)}");
+                Log.Error(Log.Channels.Content, "切换联机模式失败：{0}", GetError(initOp));
                 return;
             }
 
             ok = await EnsureManifestLoadedAsync(_defaultPackage, packageVersion, appendTimeTicks: true);
             if (!ok)
             {
-                Debug.LogError("[YooAsset] 切换联机模式失败：加载清单失败。");
+                Log.Error(Log.Channels.Content, "切换联机模式失败：加载清单失败。");
                 return;
             }
 
             IsInitialized = true;
-            Debug.Log($"[YooAsset] 已切换到联机模式，远程服务：{remoteServicesUrl}");
+            Log.Info(Log.Channels.Content, "已切换到联机模式，远程服务：{0}", remoteServicesUrl);
         }
 
         /// <summary>
@@ -140,7 +141,7 @@ namespace ACLS.Authoring
             {
                 if (string.IsNullOrWhiteSpace(_remoteServicesUrl))
                 {
-                    Debug.LogError("[YooAsset] 远程服务地址为空，无法初始化 HostPlayMode。");
+                    Log.Error(Log.Channels.Content, "远程服务地址为空，无法初始化 HostPlayMode。");
                     return pkg;
                 }
 
@@ -230,7 +231,7 @@ namespace ACLS.Authoring
                 var requestOp = package.RequestPackageVersionAsync(new RequestPackageVersionOptions(appendTimeTicks, timeout));
                 if (!await AwaitOperationSucceed(requestOp))
                 {
-                    Debug.LogError($"[YooAsset] 请求版本失败：{GetError(requestOp)}");
+                    Log.Error(Log.Channels.Content, "请求版本失败：{0}", GetError(requestOp));
                     return false;
                 }
                 version = requestOp.PackageVersion;
@@ -239,7 +240,7 @@ namespace ACLS.Authoring
             var loadOp = package.LoadPackageManifestAsync(new LoadPackageManifestOptions(version, timeout));
             if (!await AwaitOperationSucceed(loadOp))
             {
-                Debug.LogError($"[YooAsset] 加载清单失败：{GetError(loadOp)}");
+                Log.Error(Log.Channels.Content, "加载清单失败：{0}", GetError(loadOp));
                 return false;
             }
 

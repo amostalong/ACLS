@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using ACLS.Llm;
+using ACLS.Logging;
 using ACLS.Sim;
 
 namespace ACLS.Authoring
@@ -24,7 +25,7 @@ namespace ACLS.Authoring
                 }
                 else
                 {
-                    UnityEngine.Debug.LogWarning($"[EffectParser] dropped: {specs[i]?.Kind} (unsupported or malformed)");
+                    Log.Warn(Log.Channels.Sim, "dropped: {0} (unsupported or malformed)", specs[i]?.Kind);
                 }
             }
             return result;

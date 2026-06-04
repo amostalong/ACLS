@@ -1,4 +1,5 @@
 using System;
+using ACLS.Logging;
 using UnityEngine;
 using YooAsset;
 
@@ -43,7 +44,7 @@ namespace ACLS.Authoring
             var pkg = YooAssets.GetPackage(packageName);
             if (pkg == null)
             {
-                Debug.LogError($"[ResHandle] 资源包 {packageName} 不存在");
+                Log.Error(Log.Channels.Content, "资源包 {0} 不存在", packageName);
                 return null;
             }
             var handle = pkg.LoadAssetAsync<T>(address);
@@ -65,7 +66,7 @@ namespace ACLS.Authoring
             var pkg = YooAssets.GetPackage(packageName);
             if (pkg == null)
             {
-                Debug.LogError($"[ResHandle] 资源包 {packageName} 不存在");
+                Log.Error(Log.Channels.Content, "资源包 {0} 不存在", packageName);
                 return null;
             }
             var handle = pkg.LoadAssetAsync<T>(address);

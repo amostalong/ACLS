@@ -63,7 +63,7 @@ namespace ACLS.Llm.Tools
             if (string.IsNullOrWhiteSpace(eventText))
                 return Task.FromResult("缺少必要参数：event（事件）。");
 
-            GameMemory.Append(world, date.Trim(), eventText.Trim());
+            NarrativeMemory.Append(world, date.Trim(), eventText.Trim());
             return Task.FromResult($"✅ 已记录记忆：{date} — {eventText}");
         }
     }

@@ -1,68 +1,87 @@
 using System;
+using System.Text;
 
 namespace ACLS.Data
 {
-    // 实体条目基类。
-    public abstract class GameDataEntityBase
-    {
-        public string Id = "";
-        public string Name = "";
-        public string Source = "";   // "world_build" / "stage_create" / "static"
-    }
-
-    // ──── NPC / 人物 ────
+    // ──── L2 Char（人物/人脉） ────
 
     [Serializable]
-    public sealed class NpcEntry : GameDataEntityBase
+    public sealed class CharEntry
     {
-        public string Role = "";            // 身份/职能
-        public int RelationValue;           // -100 ~ +100
-        public string Stance = "";          // 当前立场
-        public string Location = "";        // 所在地点
-        public int DaysAway;                // 仅用于 L2 人脉（可达天数）
+        public string name = "";
+        public string role = "";
+        public string location = "";
+        public int relation;
+        public int reachable_in_days;
 
         public string ToLlmText()
         {
-            return $"# {Name} ({Id})\n"
-                + $"角色：{Role}\n"
-                + $"关系：{RelationValue:+0;-0;0}\n"
-                + $"立场：{Stance}\n"
-                + (!string.IsNullOrEmpty(Location) ? $"位置：{Location}\n" : "")
-                + $"来源：{Source}\n";
+            var sb = new StringBuilder();
+            sb.AppendLine($"# {name}");
+            sb.AppendLine($"角色：{role}");
+            sb.AppendLine($"关系：{relation:+0;-0;0}");
+            if (!string.IsNullOrEmpty(location)) sb.AppendLine($"位置：{location}");
+            sb.AppendLine($"可达：约{reachable_in_days}天");
+            return sb.ToString();
         }
     }
 
-    // ──── 势力 ────
+    // ──── L2 Faction（势力/组织） ────
 
     [Serializable]
-    public sealed class FactionEntry : GameDataEntityBase
+    public sealed class FactionEntry
     {
-        public string Status = "";          // 一句话态势
-        public string Type = "";            // "macro" / "regional"
+        public string name = "";
+        public string type = "";      // "macro" / "regional" / "local"
+        public string stance = "";
 
         public string ToLlmText()
         {
-            return $"# {Name} ({Id})\n"
-                + $"态势：{Status}\n"
-                + $"类型：{Type}\n"
-                + $"来源：{Source}\n";
+            var sb = new StringBuilder();
+            sb.AppendLine($"# {name}");
+            if (!string.IsNullOrEmpty(type)) sb.AppendLine($"类型：{type}");
+            sb.AppendLine($"态势：{stance}");
+            return sb.ToString();
         }
     }
 
-    // ──── 地点 ────
+    // ──── L2 Place（地点） ────
 
     [Serializable]
-    public sealed class LocationEntry : GameDataEntityBase
+    public sealed class PlaceEntry
     {
-        public string Region = "";          // 所属郡/州
-        public string Type = "";            // "settlement" / "exit" / "region"
+        public string name = "";
+        public string type = "";         // "settlement" / "exit" / "region"
+        public string description = "";
 
         public string ToLlmText()
         {
-            return $"# {Name} ({Id})\n"
-                + (!string.IsNullOrEmpty(Region) ? $"所属：{Region}\n" : "")
-                + $"类型：{Type}\n"
-                + $"来源：{Source}\n";
+            var sb = new StringBuilder();
+            sb.AppendLine($"# {name}");
+            if (!string.IsNullOrEmpty(type)) sb.AppendLine($"类型：{type}");
+            if (!string.IsNullOrEmpty(description)) sb.AppendLine($"描述：{description}");
+            return sb.ToString();
+        }
+    }
+
+    // ──── L2 Event（事件） ────
+
+    [Serializable]
+    public sealed class EventEntry
+    {
+        public string title = "";
+        public string urgency = "medium";   // "high" / "medium" / "low"
+        public string deadline = "ongoing";
+        public string detail = "";
+
+        public string ToLlmText()
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine($"# {title}");
+            sb.AppendLine($"优先级：{urgency}");
+            sb.AppendLine($"期限：{deadline}");
+            if (!string.IsNullOrEmpty(detail)) sb.AppendLine($"详情：{detail}");
+            return sb.ToString();
         }
     }
 }
