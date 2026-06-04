@@ -33,6 +33,55 @@ namespace ACLS.Llm
         public string Summary; // one-line world summary shown to player
         public PlayerSpec Player;
 
+        // ---- 结构化实体数据（补充文本内容，供 WorldDataRegistrar 灌入 GameDataLoader） ----
+        public List<FactionInfo> L4Factions = new List<FactionInfo>();
+        public List<HistoryAnchor> HistoryAnchors = new List<HistoryAnchor>();
+        public List<PowerInfo> L3Powers = new List<PowerInfo>();
+        public List<NpcInfo> L1Npcs = new List<NpcInfo>();
+        public List<string> L1Exits = new List<string>();
+        public List<ContactInfo> L2Contacts = new List<ContactInfo>();
+        public List<string> L2Pressures = new List<string>();
+        public List<string> L2Opportunities = new List<string>();
+
+        // ---- 内层类型（JSON 解析用） ----
+        [Serializable]
+        public sealed class FactionInfo
+        {
+            public string name = "";
+            public string status = "";
+        }
+
+        [Serializable]
+        public sealed class HistoryAnchor
+        {
+            public string text = "";
+        }
+
+        [Serializable]
+        public sealed class PowerInfo
+        {
+            public string name = "";
+            public string stance = "";
+        }
+
+        [Serializable]
+        public sealed class NpcInfo
+        {
+            public string name = "";
+            public string role = "";
+            public int relation_value;
+            public string stance = "";
+        }
+
+        [Serializable]
+        public sealed class ContactInfo
+        {
+            public string name = "";
+            public string role = "";
+            public string location = "";
+            public int days_away;
+        }
+
         [Serializable]
         public sealed class PlayerSpec
         {
@@ -94,12 +143,20 @@ namespace ACLS.Llm
                         string fn = ((string)f["name"] ?? "").Trim();
                         string fs = ((string)f["status"] ?? "").Trim();
                         if (!string.IsNullOrWhiteSpace(fn)) sb4.AppendLine($"· {fn}：{fs}");
+                        if (!string.IsNullOrWhiteSpace(fn))
+                            result.L4Factions.Add(new FactionInfo { name = fn, status = fs });
                     }
                 }
                 if (l4["history_anchors"] is JArray anchors)
                 {
                     sb4.Append("历史锚点：");
-                    foreach (var a in anchors) sb4.Append((string)a + "  ");
+                    foreach (var a in anchors)
+                    {
+                        string at = ((string)a ?? "").Trim();
+                        sb4.Append(at + "  ");
+                        if (!string.IsNullOrWhiteSpace(at))
+                            result.HistoryAnchors.Add(new HistoryAnchor { text = at });
+                    }
                     sb4.AppendLine();
                 }
                 string sum4 = (string)l4["summary"] ?? "";
@@ -122,6 +179,8 @@ namespace ACLS.Llm
                         string pn = ((string)p["name"] ?? "").Trim();
                         string ps = ((string)p["stance"] ?? "").Trim();
                         if (!string.IsNullOrWhiteSpace(pn)) sb3.AppendLine($"· {pn}：{ps}");
+                        if (!string.IsNullOrWhiteSpace(pn))
+                            result.L3Powers.Add(new PowerInfo { name = pn, stance = ps });
                     }
                 }
                 string tensions = (string)l3["regional_tensions"] ?? "";
@@ -153,6 +212,7 @@ namespace ACLS.Llm
                         string stance = ((string)n["stance"] ?? "").Trim();
                         int rel = n["relation_value"]?.Value<int>() ?? 0;
                         sb1.AppendLine($"· {name}（{role}，关系{rel:+#;-#;0}）：{stance}");
+                        result.L1Npcs.Add(new NpcInfo { name = name, role = role, relation_value = rel, stance = stance });
                     }
                 }
 
@@ -161,7 +221,13 @@ namespace ACLS.Llm
                 if (l1["exits"] is JArray exits)
                 {
                     sb1.Append("[出口] ");
-                    foreach (var e in exits) sb1.Append((string)e + "  ");
+                    foreach (var e in exits)
+                    {
+                        string ex = ((string)e ?? "").Trim();
+                        sb1.Append(ex + "  ");
+                        if (!string.IsNullOrWhiteSpace(ex))
+                            result.L1Exits.Add(ex);
+                    }
                     sb1.AppendLine();
                 }
 
@@ -178,20 +244,33 @@ namespace ACLS.Llm
                     foreach (var c in contacts)
                     {
                         string name = ((string)c["name"] ?? "").Trim();
-                        string role = ((string)c["role"] ?? "").Trim();
+                        string cRole = ((string)c["role"] ?? "").Trim();
                         string cloc = ((string)c["location"] ?? "").Trim();
                         int days = c["days_away"]?.Value<int>() ?? 0;
                         if (!string.IsNullOrWhiteSpace(name))
-                            sb2.AppendLine($"· {name}（{role}，{cloc}，约{days}天）");
+                        {
+                            sb2.AppendLine($"· {name}（{cRole}，{cloc}，约{days}天）");
+                            result.L2Contacts.Add(new ContactInfo { name = name, role = cRole, location = cloc, days_away = days });
+                        }
                     }
                 }
                 if (l2["active_pressures"] is JArray pressures)
                 {
-                    foreach (var p in pressures) sb2.AppendLine($"⚠ {(string)p}");
+                    foreach (var p in pressures)
+                    {
+                        string pt = ((string)p ?? "").Trim();
+                        if (!string.IsNullOrWhiteSpace(pt)) sb2.AppendLine($"⚠ {pt}");
+                        if (!string.IsNullOrWhiteSpace(pt)) result.L2Pressures.Add(pt);
+                    }
                 }
                 if (l2["opportunities"] is JArray opps)
                 {
-                    foreach (var o in opps) sb2.AppendLine($"◇ {(string)o}");
+                    foreach (var o in opps)
+                    {
+                        string ot = ((string)o ?? "").Trim();
+                        if (!string.IsNullOrWhiteSpace(ot)) sb2.AppendLine($"◇ {ot}");
+                        if (!string.IsNullOrWhiteSpace(ot)) result.L2Opportunities.Add(ot);
+                    }
                 }
                 result.L2Text = sb2.ToString().Trim();
             }

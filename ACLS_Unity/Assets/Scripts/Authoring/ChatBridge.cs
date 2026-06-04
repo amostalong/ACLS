@@ -169,6 +169,17 @@ namespace ACLS.Authoring
             });
         }
 
+        // Called once after WorldBuild to generate L1 scene using tool-based L1Builder.
+        public void StartL1Builder(Action<bool> onComplete)
+        {
+            if (!Ready) { onComplete?.Invoke(false); return; }
+            orchestrator?.StartL1Builder(success =>
+            {
+                if (success) orchestrator?.TransitionTo(DialogueStateType.StagePlay);
+                onComplete?.Invoke(success);
+            });
+        }
+
         // Called once after character expansion to generate L1_Stage + L2_Arena.
         public void StartStageCreate(CharacterPresets.Preset preset, Action<bool> onComplete)
         {

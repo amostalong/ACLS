@@ -39,6 +39,9 @@ namespace ACLS.Authoring
 
             await YooAssetBootstrapper.InitializeAsync();
 
+            // 加载游戏数据库（人物/势力/地点）
+            GameDataLoader.Init();
+
             WorldFactory.RegisterPlaceholderLocalization();
 
             Registry.Clear();

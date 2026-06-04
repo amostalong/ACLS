@@ -158,6 +158,8 @@ namespace ACLS.Authoring
             DialogueStateType.ActorCreation =>
                 "返回严格的 JSON，字段：family_background, social_circle[], recent_goal, secret, values, starting_assets{connections[], knowledge[], items[]}",
 
+            DialogueStateType.L1Builder => "",  // 无固定 JSON schema，LLM 自由使用工具
+
             DialogueStateType.StagePlay =>
                 "每次回复严格使用 JSON：\n" +
                 "{\n" +
@@ -215,5 +217,9 @@ namespace ACLS.Authoring
         /// 表演
         /// </summary>
         StagePlay,
+        /// <summary>
+        /// L1 场景构建（tool-based，由 L1BuilderState 驱动）
+        /// </summary>
+        L1Builder,
     }
 }

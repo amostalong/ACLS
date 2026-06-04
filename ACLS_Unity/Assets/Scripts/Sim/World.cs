@@ -40,6 +40,9 @@ namespace ACLS.Sim
         // L1-L4 tiered world context built during new-game setup by LLM.
         public WorldStageData Stage = new WorldStageData();
 
+        // Narrative memory as string-JSON. Format: {"entries":[{"date":"...","event":"..."},...]}
+        public string MemoryJson = "{}";
+
         [NonSerialized] private Dictionary<int, Character> charIndex;
         [NonSerialized] private Dictionary<int, Location> locIndex;
         [NonSerialized] private Dictionary<int, Faction> facIndex;

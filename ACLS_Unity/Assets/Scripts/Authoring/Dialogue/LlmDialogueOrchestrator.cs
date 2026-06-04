@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using ACLS.Data;
 using ACLS.Llm;
+using ACLS.Llm.Tools;
 using ACLS.Sim;
 using ACLS.Logging;
 using Cysharp.Threading.Tasks;
@@ -49,6 +50,9 @@ namespace ACLS.Authoring
         public event Action<LlmUsage, LlmUsage> OnUsage;       // (last, cumulative)
         public event Action<string> OnThinkingChanged;
 
+        // ---- tools ----
+        public ToolRegistry ToolRegistry { get; } = ToolRegistry.Instance;
+
         // ---- internal ----
         private CancellationTokenSource lifetimeCts;
         private CancellationTokenSource currentCts;
@@ -65,6 +69,23 @@ namespace ACLS.Authoring
             EffectRouter = new EffectRouter(world);
             History = new ChatHistory();
             lifetimeCts = new CancellationTokenSource();
+
+            // 注册默认工具
+            RegisterDefaultTools();
+        }
+
+        /// <summary>注册所有默认 LLM 工具。可被子类或额外初始化覆盖。</summary>
+        public void RegisterDefaultTools()
+        {
+            ToolRegistry.Register(new CalculateTravelTool());
+            ToolRegistry.Register(new LookupCharacterTool());
+            ToolRegistry.Register(new LookupLocationTool());
+            ToolRegistry.Register(new LookupFactionTool());
+            // L1-builder 工具（需要 World 引用）
+            ToolRegistry.Register(new ReadWorldLayerTool(World));
+            ToolRegistry.Register(new ReadPlayerStateTool(World));
+            ToolRegistry.Register(new ReadMemoryTool(World));
+            ToolRegistry.Register(new WriteMemoryTool(World));
         }
 
         public void Dispose()
@@ -284,7 +305,79 @@ namespace ACLS.Authoring
             }
         }
 
-        // 4. Stage create (one-shot, no history — called after character expansion).
+        // 4. L1 builder (tool-based, reads world layers + memory + entities via tools).
+        public async void StartL1Builder(Action<bool> onComplete)
+        {
+            if (Busy || LlmClient == null)
+            {
+                Log.Warn(Log.Channels.Llm, "❌ StartL1Builder 跳过: Busy={0} LlmClient={1}", Busy, LlmClient != null);
+                onComplete?.Invoke(false);
+                return;
+            }
+
+            if (World?.Stage == null || !World.Stage.IsWorldBuilt)
+            {
+                Log.Warn(Log.Channels.Llm, "❌ StartL1Builder 跳过: 世界尚未构建");
+                onComplete?.Invoke(false);
+                return;
+            }
+
+            Log.Info(Log.Channels.Llm, "▶ StartL1Builder");
+            var state = new L1BuilderState(this);
+            string prompt = state.AssemblePrompt();
+
+            SetBusy(true);
+            var thisCts = CancellationTokenSource.CreateLinkedTokenSource(lifetimeCts.Token);
+            currentCts = thisCts;
+            try
+            {
+                // 使用工具调用模式（complete with tools），让 LLM 自主读取所需数据
+                var resp = await CompleteStreamWithTools(prompt,
+                    new List<ChatMessage> { new ChatMessage(ChatRole.User, "开始构建L1场景") }, thisCts.Token);
+                TrackUsage(resp.Usage);
+
+                var result = state.ParseResponse(resp.Content);
+                if (result.IsError)
+                {
+                    Log.Error(Log.Channels.Llm, "L1 构建解析失败: {0}", result.ErrorMessage);
+                    OnError?.Invoke(result.ErrorMessage);
+                    onComplete?.Invoke(false);
+                    return;
+                }
+
+                SetThinking(result.Thinking ?? "");
+                state.ApplyEffects(result);
+                if (!string.IsNullOrWhiteSpace(result.Narration))
+                {
+                    History.Add(new ChatMessage(ChatRole.Assistant, result.Narration));
+                    OnNarration?.Invoke(result.Narration);
+                }
+                onComplete?.Invoke(true);
+            }
+            catch (OperationCanceledException)
+            {
+                if (!lifetimeCts.IsCancellationRequested)
+                {
+                    Log.Error(Log.Channels.Llm, "已中断 L1 构建");
+                    OnError?.Invoke("已中断 L1 构建。");
+                }
+                onComplete?.Invoke(false);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(Log.Channels.Llm, "L1 构建调用失败: {0}", ex.Message);
+                OnError?.Invoke("L1 构建调用失败：" + ex.Message);
+                onComplete?.Invoke(false);
+            }
+            finally
+            {
+                if (currentCts == thisCts) currentCts = null;
+                thisCts.Dispose();
+                SetBusy(false);
+            }
+        }
+
+        // 5. Stage create (one-shot, no history — called after character expansion).
         public async void StartStageCreate(CharacterPresets.Preset preset, Action<bool> onComplete)
         {
             if (Busy || LlmClient == null)
@@ -371,8 +464,7 @@ namespace ACLS.Authoring
             currentCts = thisCts;
             try
             {
-                var resp = await CompleteStreamWithThinking(prompt, History.Recent(RecentMessages), thisCts.Token);
-                TrackUsage(resp.Usage);
+                var resp = await CompleteStreamWithTools(prompt, History.Recent(RecentMessages), thisCts.Token);
 
                 var result = CurrentState.ParseResponse(resp.Content);
                 HandleResult(CurrentState, result);
@@ -452,6 +544,111 @@ namespace ACLS.Authoring
             LlmDebugLog.Add(GetProviderLabel(), reqJson, resp.Content);
 
             return resp;
+        }
+
+        /// <summary>
+        /// 带工具调用支持的流式请求。自动处理 tool_calling 循环：
+        /// 如果 LLM 返回 tool_use，执行工具后将结果发回 LLM，直到获得纯文本回复。
+        /// 中间的工具交互对调用方透明。
+        /// </summary>
+        private async Task<LlmResponse> CompleteStreamWithTools(string prompt,
+            IReadOnlyList<ChatMessage> historyMessages, CancellationToken ct)
+        {
+            SetThinking("");
+
+            var tools = ToolRegistry.GetAllDefinitions();
+            var workingMessages = new List<ChatMessage>(historyMessages);
+            var raw = new StringBuilder();
+            string last = "";
+            int lastEmit = Environment.TickCount;
+
+            int loopCount = 0;
+            const int maxToolLoops = 10;
+
+            while (loopCount < maxToolLoops)
+            {
+                loopCount++;
+                raw.Clear();
+                last = "";
+
+                var resp = await LlmClient.CompleteStreamWithToolsAsync(
+                    prompt, workingMessages, tools, delta =>
+                    {
+                        if (string.IsNullOrEmpty(delta)) return;
+                        raw.Append(delta);
+                        if (TryExtractThinking(raw, out var t) && t != last)
+                        {
+                            last = t;
+                            int now = Environment.TickCount;
+                            if (now - lastEmit >= 50)
+                            {
+                                lastEmit = now;
+                                SetThinking(t);
+                            }
+                        }
+                    }, ct);
+
+                TrackUsage(resp.Usage);
+
+                if (!resp.HasToolCalls)
+                {
+                    // 纯文本回复——完成
+                    Log.Info(Log.Channels.Llm, "✅ 工具循环完成 (共{0}轮) | 内容长度={1}",
+                        loopCount, raw.Length);
+                    resp.Content = raw.ToString();
+                    return resp;
+                }
+
+                // 有工具调用：执行每个工具，将结果加入工作消息列表
+                Log.Info(Log.Channels.Llm, "🔧 工具循环第{0}轮: {1}个工具调用",
+                    loopCount, resp.ToolCalls.Count);
+
+                // 1. 添加 assistant 文本 + tool_use 到工作列表
+                if (raw.Length > 0)
+                {
+                    workingMessages.Add(new ChatMessage(ChatRole.Assistant, raw.ToString()));
+                }
+
+                foreach (var tc in resp.ToolCalls)
+                {
+                    workingMessages.Add(ChatMessage.ForToolCall(tc.Id, tc.Name, tc.Args));
+                }
+
+                // 2. 执行每个工具
+                foreach (var tc in resp.ToolCalls)
+                {
+                    var tool = ToolRegistry.Get(tc.Name);
+                    if (tool == null)
+                    {
+                        Log.Warn(Log.Channels.Llm, "⚠ 未知工具: {0}", tc.Name);
+                        workingMessages.Add(ChatMessage.ForToolResult(tc.Id,
+                            $"错误：未知工具「{tc.Name}」"));
+                        continue;
+                    }
+
+                    Log.Info(Log.Channels.Llm, "▶ 执行工具: {0} | args={1}", tc.Name, Truncate(tc.Args, 200));
+                    string result;
+                    try
+                    {
+                        result = await tool.ExecuteAsync(tc.Args, ct);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error(Log.Channels.Llm, "工具执行失败 {0}: {1}", tc.Name, ex.Message);
+                        result = $"工具执行出错：{ex.Message}";
+                    }
+
+                    Log.Info(Log.Channels.Llm, "◀ 工具结果: {0} | 长度={1}", tc.Name, result?.Length ?? 0);
+                    workingMessages.Add(ChatMessage.ForToolResult(tc.Id, result));
+                }
+
+                // 重置累积文本，继续循环
+                raw.Clear();
+            }
+
+            // 超过最大循环次数，返回最后累积的文本
+            Log.Warn(Log.Channels.Llm, "⚠ 工具循环达到上限({0}轮)，强制返回", maxToolLoops);
+            return new LlmResponse { Content = raw.ToString() };
         }
 
         private string GetProviderLabel()

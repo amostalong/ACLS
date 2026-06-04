@@ -37,6 +37,9 @@ namespace ACLS.Authoring
                 world.Stage.L2Arena = stage.L2Text ?? "";
             }
 
+            // Stage 中的 NPC 灌入 GameDataLoader
+            WorldDataRegistrar.Register(stage);
+
             result.Thinking = stage.Thinking ?? "";
             result.Narration = stage.SceneDescription ?? stage.L1Text ?? "";
             return result;

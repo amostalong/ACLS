@@ -489,8 +489,15 @@ namespace ACLS.UI
                 var charPreset = NewGamePresets.ToCharacterPreset(ngPreset);
                 chat.ExpandCharacter(charPreset, _ =>
                 {
-                    if (success) chat.StartOpening(charPreset);
-                    else chat.StartStageCreate(charPreset, __ => chat.StartOpening(charPreset));
+                    if (success)
+                    {
+                        // WorldBuild 成功后，用 L1Builder（工具驱动）生成 L1 场景
+                        chat.StartL1Builder(__ => chat.StartOpening(charPreset));
+                    }
+                    else
+                    {
+                        chat.StartStageCreate(charPreset, __ => chat.StartOpening(charPreset));
+                    }
                 });
             });
         }
@@ -541,7 +548,11 @@ namespace ACLS.UI
                         Blurb = blurb,
                     };
 
-                    chat.ExpandCharacter(tempPreset, _ => chat.StartOpening(tempPreset));
+                    chat.ExpandCharacter(tempPreset, _ =>
+                    {
+                        if (success) chat.StartL1Builder(__ => chat.StartOpening(tempPreset));
+                        else chat.StartOpening(tempPreset);
+                    });
                     return;
                 }
 
