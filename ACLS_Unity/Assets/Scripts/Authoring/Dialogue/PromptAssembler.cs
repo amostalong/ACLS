@@ -12,18 +12,15 @@ namespace ACLS.Authoring
     {
         private readonly LlmPromptConfig config;
         private readonly World world;
-        private readonly WorldSnapshot snapshot;
 
         public PromptAssembler(LlmPromptConfig config, World world)
         {
             this.config = config;
             this.world = world;
-            this.snapshot = new WorldSnapshot();
         }
 
         // Builds the full prompt for a given state.
-        public string Assemble(DialogueStateType stateType, string userInput = null,
-            SnapshotTiers snapshotTiers = SnapshotTiers.Default)
+        public string Assemble(DialogueStateType stateType, string userInput = null)
         {
             var sb = new StringBuilder();
 
@@ -36,20 +33,11 @@ namespace ACLS.Authoring
             // 3. JSON schema reminder (state-specific).
             sb.Append("\n\n").Append(JsonSchemaFor(stateType));
 
-            // 4. World snapshot (T1~T4 layers).
-            SnapshotBuilder.Refresh(world, snapshot);
-            if ((snapshotTiers & SnapshotTiers.T1) != 0 && !string.IsNullOrEmpty(snapshot.Tier1))
-                sb.Append("\n\n").Append(snapshot.Tier1);
-            if ((snapshotTiers & SnapshotTiers.T2) != 0 && !string.IsNullOrEmpty(snapshot.Tier2))
-                sb.Append("\n\n").Append(snapshot.Tier2);
-            if ((snapshotTiers & SnapshotTiers.T3) != 0 && !string.IsNullOrEmpty(snapshot.Tier3))
-                sb.Append("\n\n").Append(snapshot.Tier3);
-            if ((snapshotTiers & SnapshotTiers.T4) != 0 && !string.IsNullOrEmpty(snapshot.Tier4))
-                sb.Append("\n\n").Append(snapshot.Tier4);
-
-            // 5. L4-L1 stage context (injected for StagePlay, skipped during build phases).
+            // 4. L4-L1 stage context (injected for StagePlay, skipped during build phases).
             if (stateType == DialogueStateType.StagePlay && world.Stage != null)
             {
+                if (!string.IsNullOrEmpty(world.Stage.WorldBuild))
+                    sb.Append("\n\n[世界观设定]\n").Append(world.Stage.WorldBuild);
                 if (!string.IsNullOrEmpty(world.Stage.L4World))
                     sb.Append("\n\n[宏观背景]\n").Append(world.Stage.L4World);
                 if (!string.IsNullOrEmpty(world.Stage.L3Expanse))
@@ -58,6 +46,27 @@ namespace ACLS.Authoring
                     sb.Append("\n\n[近域层]\n").Append(world.Stage.L2Arena);
                 if (!string.IsNullOrEmpty(world.Stage.L1Stage))
                     sb.Append("\n\n[贴身层]\n").Append(world.Stage.L1Stage);
+
+                // 主角信息（含 WorldBuild 阶段丰富后的背景/价值观/目标等）
+                var player = world.Player;
+                if (player != null)
+                {
+                    var psb = new System.Text.StringBuilder();
+                    psb.Append($"姓名：{player.Name}，{player.AgeAt(world.Date)}岁，{(player.Sex == Sim.Sex.Male ? "男" : "女")}");
+                    if (!string.IsNullOrWhiteSpace(player.Courtesy)) psb.Append($"，字{player.Courtesy}");
+                    if (!string.IsNullOrWhiteSpace(player.BackgroundStory)) psb.Append($"\n[背景] {player.BackgroundStory}");
+                    if (!string.IsNullOrWhiteSpace(player.Values)) psb.Append($"\n[价值观] {player.Values}");
+                    if (!string.IsNullOrWhiteSpace(player.CurrentGoal)) psb.Append($"\n[近期目标] {player.CurrentGoal}");
+                    if (!string.IsNullOrWhiteSpace(player.Secret)) psb.Append($"\n[秘密] {player.Secret}");
+                    if (player.Connections != null && player.Connections.Count > 0)
+                        psb.Append($"\n[人脉] {string.Join("、", player.Connections)}");
+                    if (player.KnownFacts != null && player.KnownFacts.Count > 0)
+                        psb.Append($"\n[已知情报] {string.Join("、", player.KnownFacts)}");
+                    if (player.OwnedItems != null && player.OwnedItems.Count > 0)
+                        psb.Append($"\n[随身物品] {string.Join("、", player.OwnedItems)}");
+
+                    sb.Append("\n\n[主角信息]\n").Append(psb.ToString().Trim());
+                }
             }
 
             // 6. User input / action.
@@ -120,21 +129,6 @@ namespace ACLS.Authoring
             return sb.ToString();
         }
 
-        // Builds the character-expansion prompt with variable substitution.
-        public string AssembleCharacterExpansion(CharacterPresets.Preset preset, Character player)
-        {
-            string template = config?.WorldCreatePrompt ?? "";
-            return template
-                .Replace("{name}", player.Name)
-                .Replace("{courtesy}", player.Courtesy)
-                .Replace("{sex}", player.Sex == Sex.Male ? "男" : "女")
-                .Replace("{age}", player.AgeAt(world.Date).ToString())
-                .Replace("{location}", world.GetLocation(player.Identity?.LocationId ?? 0)?.Name ?? "")
-                .Replace("{blurb}", preset.Blurb ?? "")
-                .Replace("{date}", world.Date.ToString())
-                .Replace("{trait}", TraitLabel(preset.TraitId));
-        }
-
         private static string FragmentFor(DialogueStateType type) => type switch
         {
             DialogueStateType.WorldBuild    => LoadFragment("Fragment_WorldBuild"),
@@ -167,6 +161,7 @@ namespace ACLS.Authoring
             DialogueStateType.StagePlay =>
                 "每次回复严格使用 JSON：\n" +
                 "{\n" +
+                "  \"date\": \"<当前叙事日期，格式如 0184年01月08日>\",\n" +
                 "  \"thinking\": \"<你的推理过程，原样输出，尽量先输出该字段>\",\n" +
                 "  \"narration\": \"<2-4 段中文叙事>\",\n" +
                 "  \"scene_participants\": [ {\"name\": \"...\", \"role\": \"...\"} ],\n" +

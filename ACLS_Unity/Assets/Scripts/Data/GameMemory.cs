@@ -74,6 +74,17 @@ namespace ACLS.Data
             return GameDataLoader.FindLocationStatic(name);
         }
 
+        // ──── NPC 丰富化更新（Step 5 后调用） ────
+        public void ApplyNpcExpansion(string name, string backgroundStory, string values, string currentGoal, string secret)
+        {
+            var entry = FindChar(name);
+            if (entry == null) return;
+            if (!string.IsNullOrWhiteSpace(backgroundStory)) entry.background_story = backgroundStory;
+            if (!string.IsNullOrWhiteSpace(values)) entry.values = values;
+            if (!string.IsNullOrWhiteSpace(currentGoal)) entry.current_goal = currentGoal;
+            if (!string.IsNullOrWhiteSpace(secret)) entry.secret = secret;
+        }
+
         // ──── 内部查找（返回原始对象） ────
 
         private CharEntry FindChar(string name)

@@ -14,6 +14,12 @@ namespace ACLS.Data
         public int relation;
         public int reachable_in_days;
 
+        // ──── 角色丰富化（由 Step 5 LLM 完成后填充） ────
+        public string background_story = "";
+        public string values = "";
+        public string current_goal = "";
+        public string secret = "";
+
         public string ToLlmText()
         {
             var sb = new StringBuilder();
@@ -22,6 +28,10 @@ namespace ACLS.Data
             sb.AppendLine($"关系：{relation:+0;-0;0}");
             if (!string.IsNullOrEmpty(location)) sb.AppendLine($"位置：{location}");
             sb.AppendLine($"可达：约{reachable_in_days}天");
+            if (!string.IsNullOrEmpty(background_story)) sb.AppendLine($"背景：{background_story}");
+            if (!string.IsNullOrEmpty(values)) sb.AppendLine($"价值观：{values}");
+            if (!string.IsNullOrEmpty(current_goal)) sb.AppendLine($"当前目标：{current_goal}");
+            if (!string.IsNullOrEmpty(secret)) sb.AppendLine($"秘密：{secret}");
             return sb.ToString();
         }
     }

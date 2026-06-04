@@ -323,11 +323,7 @@ namespace ACLS.UI
             if (card != null) card.SetActive(false);
 
             stateMachine?.TransitionTo(GameState.Dialogue);
-            chat.ExpandCharacter(preset, success =>
-            {
-                if (!success) return;
-                chat.StartStageCreate(preset, _ => chat.StartOpening(preset));
-            });
+            chat.StartStageCreate(preset, _ => chat.StartOpening(preset));
         }
     }
 }

@@ -27,6 +27,7 @@ namespace ACLS.Llm
     public sealed class LlmReply
     {
         public string Thinking;
+        public string Date;           // LLM-friendly date: "0184年01月08日"
         public string Narration;
         public List<Participant> SceneParticipants = new List<Participant>();
         public List<Choice> Choices = new List<Choice>();
@@ -127,6 +128,7 @@ namespace ACLS.Llm
 
             var result = new LlmReply { Narration = narration.Trim() };
             result.Thinking = ((string)obj["thinking"] ?? "").Trim();
+            result.Date = ((string)obj["date"] ?? "").Trim();
 
             // scene_participants (optional but expected)
             if (obj["scene_participants"] is JArray pArr)

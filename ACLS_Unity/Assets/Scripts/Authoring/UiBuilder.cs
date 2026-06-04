@@ -11,8 +11,6 @@ namespace ACLS.Authoring
     public static class UiBuilder
     {
         public const float HUD_HEIGHT = 64f;
-        public const float CHAR_PANEL_WIDTH = 360f;     // slim left sidebar; chat is the main stage
-        public const float AVATAR_BAR_HEIGHT = 88f;     // top of chat area: who's in this scene
 
         public static void Build(World world, GameClockDriver clock, ChatBridge chat, GameStateMachine stateMachine)
         {
@@ -47,37 +45,15 @@ namespace ACLS.Authoring
             hudRt.sizeDelta = new Vector2(0, HUD_HEIGHT);
             hudGo.AddComponent<HudView>().Bind(world, clock, chat);
 
-            // CharacterPanel — slim left column (CHAR_PANEL_WIDTH), top edge below HUD.
-            var charGo = NewChild(canvas.transform, "CharacterPanel");
-            var charRt = (RectTransform)charGo.transform;
-            charRt.anchorMin = new Vector2(0, 0);
-            charRt.anchorMax = new Vector2(0, 1);
-            charRt.pivot = new Vector2(0, 0.5f);
-            charRt.offsetMin = new Vector2(0, 0);
-            charRt.offsetMax = new Vector2(CHAR_PANEL_WIDTH, -HUD_HEIGHT);
-            charGo.AddComponent<CharacterPanelView>().Bind(world);
-
-            // AvatarBar — top strip of the chat area, right of CharacterPanel.
-            // Shows who's in the scene with the player.
-            var avatarGo = NewChild(canvas.transform, "AvatarBar");
-            var avatarRt = (RectTransform)avatarGo.transform;
-            avatarRt.anchorMin = new Vector2(0, 1);
-            avatarRt.anchorMax = new Vector2(1, 1);
-            avatarRt.pivot = new Vector2(0.5f, 1);
-            avatarRt.offsetMin = new Vector2(CHAR_PANEL_WIDTH, -(HUD_HEIGHT + AVATAR_BAR_HEIGHT));
-            avatarRt.offsetMax = new Vector2(0, -HUD_HEIGHT);
-            avatarGo.AddComponent<AvatarBarView>().Bind(world, chat);
-
-            // ChatPanel — fills the rest of the right area (below AvatarBar, right of CharPanel).
-            // This is now the main gameplay surface.
+            // ChatPanel — fills entire area below HUD (full width, no avatar bar).
             if (chat != null)
             {
                 var chatGo = NewChild(canvas.transform, "ChatPanel");
                 var chatRt = (RectTransform)chatGo.transform;
-                chatRt.anchorMin = new Vector2(0, 0);
+                chatRt.anchorMin = Vector2.zero;
                 chatRt.anchorMax = new Vector2(1, 1);
-                chatRt.offsetMin = new Vector2(CHAR_PANEL_WIDTH, 0);
-                chatRt.offsetMax = new Vector2(0, -(HUD_HEIGHT + AVATAR_BAR_HEIGHT));
+                chatRt.offsetMin = new Vector2(0, 0);
+                chatRt.offsetMax = new Vector2(0, -HUD_HEIGHT);
                 chatGo.AddComponent<ChatPanelView>().Bind(chat);
             }
 

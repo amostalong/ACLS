@@ -136,68 +136,7 @@ namespace ACLS.Authoring
 
         // ---- public entry points (called by ChatBridge / UI) ----
 
-        // 1. Character expansion (one-shot, no history).
-        public async void ExpandCharacter(CharacterPresets.Preset preset,
-            Character player, Action<bool> onComplete)
-        {
-            if (Busy || LlmClient == null || player == null)
-            {
-                Log.Warn(Log.Channels.Llm, "[ERR] ExpandCharacter 跳过: Busy={0} LlmClient={1} player={2}", Busy, LlmClient != null, player != null);
-                onComplete?.Invoke(false);
-                return;
-            }
-
-            Log.Info(Log.Channels.Llm, "▶ ExpandCharacter: preset={0} player={1}", preset?.Title ?? preset?.Blurb, player?.Name);
-            var state = new CharacterExpansionState(this, preset, player);
-            string prompt = state.AssemblePrompt();
-
-            SetBusy(true);
-            var thisCts = CancellationTokenSource.CreateLinkedTokenSource(lifetimeCts.Token);
-            currentCts = thisCts;
-            try
-            {
-                var resp = await CompleteStreamWithThinking(prompt,
-                    new List<ChatMessage> { new ChatMessage(ChatRole.User, "开始") }, thisCts.Token);
-                TrackUsage(resp.Usage);
-
-                var result = state.ParseResponse(resp.Content);
-                if (result.IsError)
-                {
-                    Log.Error(Log.Channels.Llm, "角色拓展解析失败: {0}", result.ErrorMessage);
-                    OnError?.Invoke(result.ErrorMessage);
-                    onComplete?.Invoke(false);
-                    return;
-                }
-
-                SetThinking(result.Thinking ?? "");
-                state.ApplyEffects(result);
-                SaveManager.Save(World, GameMemory.Instance);
-                onComplete?.Invoke(true);
-            }
-            catch (OperationCanceledException)
-            {
-                if (!lifetimeCts.IsCancellationRequested)
-                {
-                    Log.Error(Log.Channels.Llm, "已中断角色拓展");
-                    OnError?.Invoke("已中断角色拓展。");
-                }
-                onComplete?.Invoke(false);
-            }
-            catch (Exception ex)
-            {
-                Log.Error(Log.Channels.Llm, "角色拓展调用失败: {0}", ex.Message);
-                OnError?.Invoke("角色拓展调用失败：" + ex.Message);
-                onComplete?.Invoke(false);
-            }
-            finally
-            {
-                if (currentCts == thisCts) currentCts = null;
-                thisCts.Dispose();
-                SetBusy(false);
-            }
-        }
-
-        // 2. Opening scene (first narrative turn after expansion).
+        // 1. Opening scene (first narrative turn after expansion).
         public async void StartOpening(CharacterPresets.Preset preset)
         {
             if (Busy || LlmClient == null)
@@ -310,7 +249,7 @@ namespace ACLS.Authoring
         // ──── World 流水线：World → L4 → L3 → L2 → L1 ────
 
         /// <summary>
-        /// 五阶段流水线构建世界：World(世界观) → L4(宏观势力) → L3(区域势力) → L2(近域网络) → L1(当前场景)。
+        /// 六阶段流水线构建世界：World(世界观) → L4(宏观势力) → L3(区域势力) → L2(近域网络) → Player(角色丰富+故事线) → L1(当前场景)。
         /// 每步调用一次 LLM，上一步的输出作为下一步的上下文。
         /// </summary>
         public async void StartWorldPipeline(string roleDescription, string worldDescription, Action<bool> onComplete)
@@ -332,11 +271,12 @@ namespace ACLS.Authoring
             string worldBuildContext = "";
             string l4Context = "";
             string l3Context = "";
+            string playerContext = "";
 
             try
             {
                 // ══════ Step 1: World（世界观设定） ══════
-                Log.Info(Log.Channels.Llm, "▸ 流水线 Step 1/5: WorldBuild");
+                Log.Info(Log.Channels.Llm, "▸ 流水线 Step 1/6: WorldBuild");
                 {
                     string fragment = LoadFragment("Fragment_WorldBuild");
                     string prompt = fragment
@@ -363,16 +303,36 @@ namespace ACLS.Authoring
                         History.Add(new ChatMessage(ChatRole.Assistant, wsReply.Narration));
                         OnNarration?.Invoke(wsReply.Narration);
                     }
+
+                    // Build player context string for subsequent steps (basic info only; expansion happens later in Step 5)
+                    {
+                        var p = World.Player;
+                        var sb = new System.Text.StringBuilder();
+                        if (p != null)
+                        {
+                            sb.Append($"姓名：{p.Name}，{p.AgeAt(World.Date)}岁，{(p.Sex == Sim.Sex.Male ? "男" : "女")}");
+                            if (!string.IsNullOrWhiteSpace(p.Courtesy)) sb.Append($"，字{p.Courtesy}");
+                            if (!string.IsNullOrWhiteSpace(p.BackgroundStory)) sb.Append($"\n[背景] {p.BackgroundStory}");
+                            if (!string.IsNullOrWhiteSpace(p.Values)) sb.Append($"\n[价值观] {p.Values}");
+                            if (!string.IsNullOrWhiteSpace(p.CurrentGoal)) sb.Append($"\n[近期目标] {p.CurrentGoal}");
+                            if (!string.IsNullOrWhiteSpace(p.Secret)) sb.Append($"\n[秘密] {p.Secret}");
+                            if (p.Connections.Count > 0) sb.Append($"\n[人脉] {string.Join("、", p.Connections)}");
+                            if (p.KnownFacts.Count > 0) sb.Append($"\n[已知情报] {string.Join("、", p.KnownFacts)}");
+                            if (p.OwnedItems.Count > 0) sb.Append($"\n[随身物品] {string.Join("、", p.OwnedItems)}");
+                        }
+                        playerContext = sb.ToString().Trim();
+                    }
                     SaveManager.Save(World, GameMemory.Instance);
-                    Log.Info(Log.Channels.Llm, "[OK] Step 1/5 WorldBuild 完成");
+                    Log.Info(Log.Channels.Llm, "[OK] Step 1/6 WorldBuild 完成");
                 }
 
                 // ══════ Step 2: L4（宏观势力） ══════
-                Log.Info(Log.Channels.Llm, "▸ 流水线 Step 2/5: L4Build");
+                Log.Info(Log.Channels.Llm, "▸ 流水线 Step 2/6: L4Build");
                 {
                     string fragment = LoadFragment("Fragment_L4Build");
                     string prompt = fragment
                         .Replace("{world_setting_context}", worldBuildContext)
+                        .Replace("{player_context}", playerContext)
                         .Replace("{role_description}", roleDescription ?? "")
                         .Replace("{world_description}", worldDescription ?? "");
 
@@ -392,24 +352,25 @@ namespace ACLS.Authoring
                     SetThinking("");
                     l4Context = l4Text;
                     World.Stage.L4World = l4Text;
-                    foreach (var f in l4Factions)
-                        GameMemory.Instance.AddFaction(new FactionEntry { name = f.name, stance = f.status, type = "macro" });
+                    foreach (var f in l4Factions.Factions)
+                        GameMemory.Instance.AddFaction(new FactionEntry { name = f.name, stance = f.stance, type = "macro" });
                     if (!string.IsNullOrWhiteSpace(l4Narration))
                     {
                         History.Add(new ChatMessage(ChatRole.Assistant, l4Narration));
                         OnNarration?.Invoke(l4Narration);
                     }
                     SaveManager.Save(World, GameMemory.Instance);
-                    Log.Info(Log.Channels.Llm, "[OK] Step 2/5 L4Build 完成，{0} 个势力", l4Factions.Count);
+                    Log.Info(Log.Channels.Llm, "[OK] Step 2/6 L4Build 完成，{0} 个势力", l4Factions.Factions.Count);
                 }
 
                 // ══════ Step 3: L3（区域势力） ══════
-                Log.Info(Log.Channels.Llm, "▸ 流水线 Step 3/5: L3Build");
+                Log.Info(Log.Channels.Llm, "▸ 流水线 Step 3/6: L3Build");
                 {
                     string fragment = LoadFragment("Fragment_L3Build");
                     string prompt = fragment
                         .Replace("{world_setting_context}", worldBuildContext)
                         .Replace("{l4_context}", l4Context)
+                        .Replace("{player_context}", playerContext)
                         .Replace("{role_description}", roleDescription ?? "")
                         .Replace("{world_description}", worldDescription ?? "");
 
@@ -429,7 +390,7 @@ namespace ACLS.Authoring
                     SetThinking("");
                     l3Context = l3Text;
                     World.Stage.L3Expanse = l3Text;
-                    foreach (var f in l3Factions)
+                    foreach (var f in l3Factions.Factions)
                         GameMemory.Instance.AddFaction(new FactionEntry { name = f.name, stance = f.stance, type = "regional" });
                     if (!string.IsNullOrWhiteSpace(l3Narration))
                     {
@@ -437,28 +398,45 @@ namespace ACLS.Authoring
                         OnNarration?.Invoke(l3Narration);
                     }
                     SaveManager.Save(World, GameMemory.Instance);
-                    Log.Info(Log.Channels.Llm, "[OK] Step 3/5 L3Build 完成，{0} 个区域势力", l3Factions.Count);
+                    Log.Info(Log.Channels.Llm, "[OK] Step 3/6 L3Build 完成，{0} 个区域势力", l3Factions.Factions.Count);
                 }
 
                 // ══════ Step 4: L2（近域网络） ══════
-                Log.Info(Log.Channels.Llm, "▸ 流水线 Step 4/5: L2Build");
+                Log.Info(Log.Channels.Llm, "▸ 流水线 Step 4/6: L2Build");
                 {
                     string fragment = LoadFragment("Fragment_L2Build");
                     string prompt = fragment
                         .Replace("{world_setting_context}", worldBuildContext)
                         .Replace("{l4_context}", l4Context)
                         .Replace("{l3_context}", l3Context)
+                        .Replace("{player_context}", playerContext)
                         .Replace("{role_description}", roleDescription ?? "")
                         .Replace("{world_description}", worldDescription ?? "");
 
-                    var resp = await CompleteStreamWithThinking(prompt,
-                        new List<ChatMessage> { new ChatMessage(ChatRole.User, "开始构建近域网络") }, pipelineCts.Token);
-                    TrackUsage(resp.Usage);
+                    bool l2Ok = false;
+                    string l2Text = null;
+                    Entities l2Entities = null;
+                    string l2Narration = null;
 
-                    var (l2Ok, l2Text, l2Entities, l2Narration) = ParseL2Reply(resp.Content);
+                    for (int attempt = 0; attempt <= 2; attempt++)
+                    {
+                        string userMsg = attempt == 0
+                            ? "开始构建近域网络"
+                            : "格式不对，请严格按照要求的 JSON 格式重新生成。不要任何额外文字。";
+
+                        var resp = await CompleteStreamWithThinking(prompt,
+                            new List<ChatMessage> { new ChatMessage(ChatRole.User, userMsg) }, pipelineCts.Token);
+                        TrackUsage(resp.Usage);
+
+                        (l2Ok, l2Text, l2Entities, l2Narration) = ParseL2Reply(resp.Content);
+                        if (l2Ok) break;
+
+                        Log.Warn(Log.Channels.Llm, "L2 解析失败，第{0}次重试...", attempt + 1);
+                    }
+
                     if (!l2Ok)
                     {
-                        Log.Error(Log.Channels.Llm, "L2 步骤解析失败");
+                        Log.Error(Log.Channels.Llm, "L2 步骤解析失败（已重试）");
                         OnError?.Invoke("近域网络构建失败。");
                         onComplete?.Invoke(false);
                         return;
@@ -478,15 +456,94 @@ namespace ACLS.Authoring
                         OnNarration?.Invoke(l2Narration);
                     }
                     SaveManager.Save(World, GameMemory.Instance);
-                    Log.Info(Log.Channels.Llm, "[OK] Step 4/5 L2Build 完成: chars={0} factions={1} places={2}",
+                    Log.Info(Log.Channels.Llm, "[OK] Step 4/6 L2Build 完成: chars={0} factions={1} places={2}",
                         l2Entities.Chars.Count, l2Entities.Factions.Count, l2Entities.Places.Count);
                 }
 
-                // ══════ Step 5: L1（当前场景） ══════
-                Log.Info(Log.Channels.Llm, "▸ 流水线 Step 5/5: L1Build");
+                // ══════ Step 5: PlayerExpansion + Storyline ══════
+                Log.Info(Log.Channels.Llm, "▸ 流水线 Step 5/6: PlayerExpansion + Storyline");
                 {
-                    // 使用 L1Builder 的 prompt，但限制只生成初始场景（不给 tools）
-                    // 直接嵌入已有上下文，不用工具
+                    string fragment = LoadFragment("Fragment_PlayerExpandStoryline");
+                    string prompt = fragment
+                        .Replace("{world_setting_context}", worldBuildContext)
+                        .Replace("{l4_context}", l4Context)
+                        .Replace("{l3_context}", l3Context)
+                        .Replace("{l2_context}", World.Stage.L2Arena)
+                        .Replace("{player_context}", playerContext);
+
+                    var resp = await CompleteStreamWithThinking(prompt,
+                        new List<ChatMessage> { new ChatMessage(ChatRole.User, "开始角色丰富化与故事线构建") }, pipelineCts.Token);
+                    TrackUsage(resp.Usage);
+
+                    if (!PlayerExpandReply.TryParse(resp.Content, out var peReply, out var peError))
+                    {
+                        Log.Error(Log.Channels.Llm, "PlayerExpand 步骤解析失败: {0}", peError);
+                        OnError?.Invoke("角色丰富化失败：" + peError);
+                        onComplete?.Invoke(false);
+                        return;
+                    }
+
+                    SetThinking(peReply.Thinking ?? "");
+
+                    // Apply player expansion data
+                    var player = World.Player;
+                    if (player != null)
+                    {
+                        if (!string.IsNullOrWhiteSpace(peReply.BackgroundStory)) player.BackgroundStory = peReply.BackgroundStory;
+                        if (!string.IsNullOrWhiteSpace(peReply.Values)) player.Values = peReply.Values;
+                        if (!string.IsNullOrWhiteSpace(peReply.CurrentGoal)) player.CurrentGoal = peReply.CurrentGoal;
+                        if (!string.IsNullOrWhiteSpace(peReply.Secret)) player.Secret = peReply.Secret;
+                        if (peReply.Connections.Count > 0) player.Connections = peReply.Connections;
+                        if (peReply.KnownFacts.Count > 0) player.KnownFacts = peReply.KnownFacts;
+                        if (peReply.OwnedItems.Count > 0) player.OwnedItems = peReply.OwnedItems;
+                    }
+
+                    // Apply NPC expansions (enrich nearby core characters)
+                    foreach (var npcExp in peReply.NpcExpansions)
+                    {
+                        GameMemory.Instance.ApplyNpcExpansion(
+                            npcExp.Name,
+                            npcExp.BackgroundStory,
+                            npcExp.Values,
+                            npcExp.CurrentGoal,
+                            npcExp.Secret);
+                    }
+                    Log.Info(Log.Channels.Llm, "[PlayerExpand] NPC 丰富化完成: {0} 人", peReply.NpcExpansions.Count);
+
+                    // Store storyline text
+                    World.Stage.L2Expansion = peReply.ToContextText();
+
+                    // Rebuild playerContext with enriched data for L1 step
+                    {
+                        var p = World.Player;
+                        var sb = new System.Text.StringBuilder();
+                        if (p != null)
+                        {
+                            sb.Append($"姓名：{p.Name}，{p.AgeAt(World.Date)}岁，{(p.Sex == Sim.Sex.Male ? "男" : "女")}");
+                            if (!string.IsNullOrWhiteSpace(p.Courtesy)) sb.Append($"，字{p.Courtesy}");
+                            if (!string.IsNullOrWhiteSpace(p.BackgroundStory)) sb.Append($"\n[背景] {p.BackgroundStory}");
+                            if (!string.IsNullOrWhiteSpace(p.Values)) sb.Append($"\n[价值观] {p.Values}");
+                            if (!string.IsNullOrWhiteSpace(p.CurrentGoal)) sb.Append($"\n[近期目标] {p.CurrentGoal}");
+                            if (!string.IsNullOrWhiteSpace(p.Secret)) sb.Append($"\n[秘密] {p.Secret}");
+                            if (p.Connections.Count > 0) sb.Append($"\n[人脉] {string.Join("、", p.Connections)}");
+                            if (p.KnownFacts.Count > 0) sb.Append($"\n[已知情报] {string.Join("、", p.KnownFacts)}");
+                            if (p.OwnedItems.Count > 0) sb.Append($"\n[随身物品] {string.Join("、", p.OwnedItems)}");
+                        }
+                        playerContext = sb.ToString().Trim();
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(peReply.Narration))
+                    {
+                        History.Add(new ChatMessage(ChatRole.Assistant, peReply.Narration));
+                        OnNarration?.Invoke(peReply.Narration);
+                    }
+                    SaveManager.Save(World, GameMemory.Instance);
+                    Log.Info(Log.Channels.Llm, "[OK] Step 5/6 PlayerExpansion + Storyline 完成: storylines={0}", peReply.Storylines.Count);
+                }
+
+                // ══════ Step 6: L1（当前场景） ══════
+                Log.Info(Log.Channels.Llm, "▸ 流水线 Step 6/6: L1Build");
+                {
                     string prompt = $@"## 当前任务：构建初始 L1 场景
 
 这是世界构建的最后一步。基于已构建好的完整上下文，你直接生成当前场景。
@@ -504,6 +561,12 @@ namespace ACLS.Authoring
 
 ### 近域网络（L2）
 {World.Stage.L2Arena}
+
+### 角色丰富化与故事线
+{World.Stage.L2Expansion}
+
+### 主角信息
+{playerContext}
 
 ## 输出要求
 
@@ -533,10 +596,12 @@ namespace ACLS.Authoring
                         new List<ChatMessage> { new ChatMessage(ChatRole.User, "开始构建初始场景") }, pipelineCts.Token);
                     TrackUsage(resp.Usage);
 
+                    Log.Info(Log.Channels.Llm, "[L1] 原始响应前200字: {0}", Truncate(SanitizeJson(resp.Content), 200));
+                    Log.Info(Log.Channels.Llm, "[L1] 原始响应长度: {0}", resp.Content?.Length ?? 0);
                     var (l1Ok, l1Text, l1Narration) = ParseL1Reply(resp.Content);
                     if (!l1Ok)
                     {
-                        Log.Error(Log.Channels.Llm, "L1 步骤解析失败");
+                        Log.Error(Log.Channels.Llm, "L1 步骤解析失败，原始内容={0}", Truncate(resp.Content ?? "(空)", 500));
                         OnError?.Invoke("初始场景构建失败。");
                         onComplete?.Invoke(false);
                         return;
@@ -550,7 +615,7 @@ namespace ACLS.Authoring
                         OnNarration?.Invoke(l1Narration);
                     }
                     SaveManager.Save(World, GameMemory.Instance);
-                    Log.Info(Log.Channels.Llm, "[OK] Step 5/5 L1Build 完成");
+                    Log.Info(Log.Channels.Llm, "[OK] Step 6/6 L1Build 完成");
                 }
 
                 // ══════ 全部完成 ══════
@@ -580,7 +645,7 @@ namespace ACLS.Authoring
             }
         }
 
-        // 4. L1 builder (tool-based, reads world layers + memory + entities via tools).
+        // 3. L1 builder (tool-based, reads world layers + memory + entities via tools).
         public async void StartL1Builder(Action<bool> onComplete)
         {
             if (Busy || LlmClient == null)
@@ -711,7 +776,7 @@ namespace ACLS.Authoring
             }
         }
 
-        // 5. Regular narrative turn (choice selected or freeform input).
+        // 2. Regular narrative turn (choice selected or freeform input).
         public async void SendAction(string userInput, string displayText = null,
             bool addToHistory = true)
         {
@@ -732,12 +797,41 @@ namespace ACLS.Authoring
             SetBusy(true);
             var thisCts = CancellationTokenSource.CreateLinkedTokenSource(lifetimeCts.Token);
             currentCts = thisCts;
+
+            const int MaxRetries = 2;
+            var extraMessages = new List<ChatMessage>();
+
             try
             {
-                var resp = await CompleteStreamWithTools(prompt, History.Recent(RecentMessages), thisCts.Token);
+                for (int attempt = 0; attempt <= MaxRetries; attempt++)
+                {
+                    if (attempt > 0)
+                    {
+                        Log.Warn(Log.Channels.Llm, "解析失败，第{0}次重试...", attempt);
+                        extraMessages.Clear();
+                        extraMessages.Add(new ChatMessage(ChatRole.User,
+                            "你刚才的回复格式不符合要求，请严格按照要求的 JSON 格式重新生成。不要包含任何 JSON 之外的文字。"));
+                    }
 
-                var result = CurrentState.ParseResponse(resp.Content);
-                HandleResult(CurrentState, result);
+                    var messages = History.Recent(RecentMessages);
+                    if (extraMessages.Count > 0)
+                        messages = messages.Concat(extraMessages).ToList();
+
+                    var resp = await CompleteStreamWithTools(prompt, messages, thisCts.Token);
+                    var result = CurrentState.ParseResponse(resp.Content);
+
+                    if (!result.IsError)
+                    {
+                        HandleResult(CurrentState, result);
+                        return;
+                    }
+
+                    // 还有重试次数则继续，否则报错
+                    if (attempt < MaxRetries)
+                        continue;
+
+                    HandleResult(CurrentState, result);
+                }
             }
             catch (OperationCanceledException)
             {
@@ -848,6 +942,21 @@ namespace ACLS.Authoring
                 raw.Clear();
                 last = "";
 
+                // 日志：本轮发送的消息列表（含已累积的工具调用/结果）
+                if (workingMessages.Count > 1)
+                {
+                    var msgLog = new System.Text.StringBuilder();
+                    msgLog.Append($"[Tool Msgs] 发送 {workingMessages.Count} 条消息 (loop#{loopCount}):\n");
+                    for (int mi = 0; mi < workingMessages.Count; mi++)
+                    {
+                        var m = workingMessages[mi];
+                        string preview = m.Content;
+                        if (preview != null && preview.Length > 120) preview = preview.Substring(0, 120) + "…";
+                        msgLog.Append($"  [{mi}] {m.Role}: {preview}\n");
+                    }
+                    Log.Info(Log.Channels.Llm, msgLog.ToString());
+                }
+
                 var resp = await LlmClient.CompleteStreamWithToolsAsync(
                     prompt, workingMessages, tools, delta =>
                     {
@@ -914,7 +1023,7 @@ namespace ACLS.Authoring
                         continue;
                     }
 
-                    Log.Info(Log.Channels.Llm, "▶ 执行工具: {0} | args={1}", tc.Name, Truncate(tc.Args, 200));
+                    Log.Info(Log.Channels.Llm, "▶ 执行工具: {0} | args={1}", tc.Name, tc.Args ?? "{}");
                     string result;
                     try
                     {
@@ -926,7 +1035,7 @@ namespace ACLS.Authoring
                         result = $"工具执行出错：{ex.Message}";
                     }
 
-                    Log.Info(Log.Channels.Llm, "◀ 工具结果: {0} | 长度={1}", tc.Name, result?.Length ?? 0);
+                    Log.Info(Log.Channels.Llm, "◀ 工具结果: {0} | result={1}", tc.Name, result ?? "(空)");
                     workingMessages.Add(ChatMessage.ForToolResult(tc.Id, result));
                 }
 
@@ -1251,7 +1360,7 @@ namespace ACLS.Authoring
         }
 
         /// <summary>解析 L2 构建的 LLM 回复。</summary>
-        private static (bool ok, string text, L2Entities entities, string narration) ParseL2Reply(string raw)
+        private static (bool ok, string text, Entities entities, string narration) ParseL2Reply(string raw)
         {
             string text = SanitizeJson(raw);
             int open = text.IndexOf('{');
@@ -1262,7 +1371,7 @@ namespace ACLS.Authoring
             {
                 var obj = Newtonsoft.Json.Linq.JObject.Parse(text.Substring(open, close - open + 1));
                 var sb = new System.Text.StringBuilder();
-                var result = new L2Entities();
+                var result = new Entities();
                 string narration = ((string)obj["narration"] ?? "").Trim();
 
                 // Chars
@@ -1327,69 +1436,91 @@ namespace ACLS.Authoring
             string text = SanitizeJson(raw);
             int open = text.IndexOf('{');
             int close = text.LastIndexOf('}');
-            if (open < 0 || close <= open) return (false, "", "");
-
-            try
+            if (open < 0 || close <= open)
             {
-                var obj = Newtonsoft.Json.Linq.JObject.Parse(text.Substring(open, close - open + 1));
-                var sb = new System.Text.StringBuilder();
-                string narration = ((string)obj["narration"] ?? "").Trim();
-
-                // 支持两种格式：顶层字段，或嵌套在 l1_stage 内部
-                var l1 = obj["l1_stage"] as Newtonsoft.Json.Linq.JObject;
-                string location = l1 != null
-                    ? ((string)l1["location"] ?? "").Trim()
-                    : ((string)obj["location"] ?? "").Trim();
-                string scene = l1 != null
-                    ? ((string)l1["scene_description"] ?? "").Trim()
-                    : ((string)obj["scene_description"] ?? "").Trim();
-                string situation = l1 != null
-                    ? ((string)l1["immediate_situation"] ?? "").Trim()
-                    : ((string)obj["immediate_situation"] ?? "").Trim();
-
-                if (!string.IsNullOrWhiteSpace(location)) sb.AppendLine($"[所在] {location}");
-                if (!string.IsNullOrWhiteSpace(scene)) sb.AppendLine(scene);
-
-                var npcs = l1?["active_npcs"] as Newtonsoft.Json.Linq.JArray ?? obj["active_npcs"] as Newtonsoft.Json.Linq.JArray;
-                if (npcs != null)
-                {
-                    foreach (var n in npcs)
-                    {
-                        string name = ((string)n["name"] ?? "").Trim();
-                        if (string.IsNullOrWhiteSpace(name)) continue;
-                        string role = ((string)n["role"] ?? "").Trim();
-                        string stance = ((string)n["stance"] ?? "").Trim();
-                        int rel = n["relation_value"]?.ToObject<int>() ?? 0;
-                        sb.AppendLine($"· {name}（{role}，关系{rel:+#;-#;0}）：{stance}");
-                    }
-                }
-
-                if (!string.IsNullOrWhiteSpace(situation)) sb.AppendLine(situation);
-
-                var exits = l1?["exits"] as Newtonsoft.Json.Linq.JArray ?? obj["exits"] as Newtonsoft.Json.Linq.JArray;
-                if (exits != null)
-                {
-                    sb.Append("[出口] ");
-                    bool first = true;
-                    foreach (var e in exits)
-                    {
-                        string ex = ((string)e ?? "").Trim();
-                        if (!string.IsNullOrWhiteSpace(ex))
-                        {
-                            if (!first) sb.Append("  ");
-                            sb.Append(ex);
-                            first = false;
-                        }
-                    }
-                    sb.AppendLine();
-                }
-
-                return (sb.Length > 0, sb.ToString().Trim(), narration);
-            }
-            catch
-            {
+                Log.Warn(Log.Channels.Llm, "[L1] 未找到 JSON 大括号，raw长度={0}", raw?.Length ?? 0);
+                Log.Trace(Log.Channels.Llm, "[L1] raw={0}", Truncate(raw ?? "", 300));
                 return (false, "", "");
             }
+
+            Newtonsoft.Json.Linq.JObject obj;
+            try { obj = Newtonsoft.Json.Linq.JObject.Parse(text.Substring(open, close - open + 1)); }
+            catch (System.Exception ex)
+            {
+                Log.Warn(Log.Channels.Llm, "[L1] JSON 解析异常: {0}", ex.Message);
+                Log.Trace(Log.Channels.Llm, "[L1] json文本前300字={0}", Truncate(text.Substring(open, Math.Min(300, close - open + 1)), 300));
+                return (false, "", "");
+            }
+
+            var sb = new System.Text.StringBuilder();
+            string narration = ((string)obj["narration"] ?? "").Trim();
+
+            // 支持两种格式：顶层字段，或嵌套在 l1_stage 内部
+            var l1 = obj["l1_stage"] as Newtonsoft.Json.Linq.JObject;
+            string location = l1 != null
+                ? ((string)l1["location"] ?? "").Trim()
+                : ((string)obj["location"] ?? "").Trim();
+            string scene = l1 != null
+                ? ((string)l1["scene_description"] ?? "").Trim()
+                : ((string)obj["scene_description"] ?? "").Trim();
+            string situation = l1 != null
+                ? ((string)l1["immediate_situation"] ?? "").Trim()
+                : ((string)obj["immediate_situation"] ?? "").Trim();
+
+            Log.Trace(Log.Channels.Llm, "[L1] 解析: location=[{0}] scene长度={1} situation长度={2}",
+                location, scene.Length, situation.Length);
+
+            if (!string.IsNullOrWhiteSpace(location)) sb.AppendLine($"[所在] {location}");
+            if (!string.IsNullOrWhiteSpace(scene)) sb.AppendLine(scene);
+
+            var npcs = l1?["active_npcs"] as Newtonsoft.Json.Linq.JArray ?? obj["active_npcs"] as Newtonsoft.Json.Linq.JArray;
+            if (npcs != null)
+            {
+                foreach (var n in npcs)
+                {
+                    string name = ((string)n["name"] ?? "").Trim();
+                    if (string.IsNullOrWhiteSpace(name)) continue;
+                    string role = ((string)n["role"] ?? "").Trim();
+                    string stance = ((string)n["stance"] ?? "").Trim();
+                    int rel = n["relation_value"]?.ToObject<int>() ?? 0;
+                    sb.AppendLine($"· {name}（{role}，关系{rel:+#;-#;0}）：{stance}");
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(situation)) sb.AppendLine(situation);
+
+            // exits：兼容字符串列表和 {destination, description} 对象列表
+            var exits = l1?["exits"] as Newtonsoft.Json.Linq.JArray ?? obj["exits"] as Newtonsoft.Json.Linq.JArray;
+            if (exits != null)
+            {
+                sb.Append("[出口] ");
+                bool first = true;
+                foreach (var e in exits)
+                {
+                    string ex;
+                    if (e.Type == Newtonsoft.Json.Linq.JTokenType.Object)
+                        ex = ((string)e["destination"] ?? "").Trim();
+                    else
+                        ex = ((string)e ?? "").Trim();
+
+                    if (!string.IsNullOrWhiteSpace(ex))
+                    {
+                        if (!first) sb.Append("  ");
+                        sb.Append(ex);
+                        first = false;
+                    }
+                }
+                sb.AppendLine();
+            }
+
+            if (sb.Length == 0)
+            {
+                Log.Warn(Log.Channels.Llm, "[L1] 构建的文本为空，但 JSON 解析成功。检查 l1_stage 字段是否缺失或为空。");
+                Log.Trace(Log.Channels.Llm, "[L1] JSON top-level keys: {0}",
+                    string.Join(", ", obj.Properties().Select(p => p.Name)));
+            }
+
+            return (sb.Length > 0, sb.ToString().Trim(), narration);
         }
 
         /// <summary>清理带 ``` 围栏的 LLM 输出，提取纯 JSON 部分。</summary>

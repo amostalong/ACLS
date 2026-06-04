@@ -59,7 +59,7 @@ namespace ACLS.Editor
                 $"{ContentRoot}/Config/LlmConfig.asset",
                 $"{ContentRoot}/Config/LlmPromptConfig.asset",
                 $"{ContentRoot}/Prompts/SysPrompt.md",
-                $"{ContentRoot}/Prompts/CharacterExpansion.md",
+                $"{ContentRoot}/Prompts/SysPrompt.md",
                 $"{ContentRoot}/Prompts/Fragment_StageCreate.md",
                 $"{ContentRoot}/Prompts/Fragment_WorldBuild.md",
                 $"{ContentRoot}/Fonts/LXGWWenKai-Regular.ttf",

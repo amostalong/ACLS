@@ -4,27 +4,6 @@
 
 这个阶段不关注叙事选项或剧情推进——只构建"舞台"。后续叙事阶段再基于这个舞台展开。
 
-## 可用工具
-
-- read_world_layer(layer) — 读取 L4(宏观)/L3(区域)/L2(近域) 背景文本
-- read_player_state(field) — 读取玩家状态，field=name/location/date/goal/stats/all
-- read_memory(count) — 读取最近 N 条叙事记忆
-- lookup_character(name) — 查询某个人物的详细档案
-- lookup_faction(name) — 查询某个势力的详细档案
-- lookup_location(name) — 查询某个地点的详细档案
-- calculate_travel(from, to, mode) — 计算两地距离和旅行时间
-- write_memory(date, event) — 记录一条记忆（构建完成后调用，保存关键事件）
-
-## 推荐工作流
-
-1. read_world_layer("L4") — 先了解宏观时代背景
-2. read_world_layer("L3") — 再了解区域背景
-3. read_player_state("all") — 了解玩家当前状态
-4. read_memory(10) — 了解近期事件脉络（如有）
-5. 需要时 lookup_character/faction/location — 补查具体实体
-6. read_world_layer("L2") — 了解已有的近域网络
-7. 整合以上信息，构建并输出 L1 场景 JSON
-
 ## 输出要求
 
 只输出一个 JSON 对象，包含以下顶层字段（尽量先输出 thinking 字段）：
@@ -63,3 +42,26 @@
 - active_npcs 中的角色必须有据可查（用 lookup_character 或从 L2 数据中核实）。
 - 所有内容必须符合世界观设定。
 - 不要 JSON 之外的文字（含 ``` 围栏）。
+
+---
+
+## 可用工具
+
+- read_world_layer(layer) — 读取 L4(宏观)/L3(区域)/L2(近域) 背景文本
+- read_player_state(field) — 读取玩家状态，field=name/location/date/goal/stats/all
+- read_memory(count) — 读取最近 N 条叙事记忆
+- lookup_character(name) — 查询某个人物的详细档案
+- lookup_faction(name) — 查询某个势力的详细档案
+- lookup_location(name) — 查询某个地点的详细档案
+- calculate_travel(from, to, mode) — 计算两地距离和旅行时间
+- write_memory(date, event) — 记录一条记忆（构建完成后调用，保存关键事件）
+
+## 推荐工作流
+
+1. read_world_layer("L4") — 先了解宏观时代背景
+2. read_world_layer("L3") — 再了解区域背景
+3. read_player_state("all") — 了解玩家当前状态
+4. read_memory(10) — 了解近期事件脉络（如有）
+5. 需要时 lookup_character/faction/location — 补查具体实体
+6. read_world_layer("L2") — 了解已有的近域网络
+7. 整合以上信息，构建并输出 L1 场景 JSON

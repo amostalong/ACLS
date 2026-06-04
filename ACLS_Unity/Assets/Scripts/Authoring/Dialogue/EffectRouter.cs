@@ -40,7 +40,11 @@ namespace ACLS.Authoring
                 }
             }
 
-            return ops.Count > 0 || result.DaysPassed > 0;
+            // 如果 LLM 回复中带了日期，以此为准（覆盖 days_passed 的推进结果）
+            if (result.Date.HasValue)
+                world.Date = result.Date.Value;
+
+            return ops.Count > 0 || result.DaysPassed > 0 || result.Date.HasValue;
         }
 
         // Interprets a suggested state string and returns the matching enum.

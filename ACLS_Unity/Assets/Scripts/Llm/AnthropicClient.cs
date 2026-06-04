@@ -119,7 +119,7 @@ namespace ACLS.Llm
                 bodyObj["tools"] = BuildAnthropicTools(tools);
 
             string json = bodyObj.ToString(Formatting.None);
-            if (verbose) Log.Info(Log.Channels.Network, "[Anthropic] → (tools={0}) {1}", tools?.Count ?? 0, Truncate(json, 300));
+            if (verbose) Log.Info(Log.Channels.Network, "[Anthropic] → (tools={0}) {1}", tools?.Count ?? 0, Truncate(json, 4096));
 
             return await StreamAnthropic(json, onTextDelta, ct);
         }
@@ -257,6 +257,12 @@ namespace ACLS.Llm
                 toolCalls.Add(tc);
             }
 
+            if (toolCalls.Count > 0)
+            {
+                foreach (var tc in toolCalls)
+                    Log.Info(Log.Channels.Network, "[Anthropic] ← tool_use: {0} id={1} args={2}", tc.Name, tc.Id, tc.Args);
+            }
+
             var result = new LlmResponse
             {
                 Content = textSb.ToString(),
@@ -330,9 +336,21 @@ namespace ACLS.Llm
 
             // Convert flat message list to Anthropic format.
             // This groups consecutive ToolCall messages into a single assistant message,
-            // and ToolResult messages into a single user message.
+            // and consecutive ToolResult messages into a single user message.
             JObject currentAssistant = null;  // accumulating assistant with tool_use blocks
             JArray currentAssistantContent = null;
+            JObject currentToolResultUser = null;  // accumulating user with tool_result blocks
+            JArray currentToolResultContent = null;
+
+            void FlushToolResult()
+            {
+                if (currentToolResultUser != null)
+                {
+                    result.Add(currentToolResultUser);
+                    currentToolResultUser = null;
+                    currentToolResultContent = null;
+                }
+            }
 
             for (int i = 0; i < messages.Count; i++)
             {
@@ -346,6 +364,7 @@ namespace ACLS.Llm
 
                     case ChatRole.User:
                         FlushAssistant(ref currentAssistant, ref currentAssistantContent, result);
+                        FlushToolResult();
                         result.Add(new JObject
                         {
                             ["role"] = "user",
@@ -355,6 +374,7 @@ namespace ACLS.Llm
 
                     case ChatRole.Assistant:
                         FlushAssistant(ref currentAssistant, ref currentAssistantContent, result);
+                        FlushToolResult();
                         // Start a new assistant message — might get tool_use appended
                         currentAssistant = new JObject { ["role"] = "assistant" };
                         currentAssistantContent = new JArray
@@ -369,6 +389,7 @@ namespace ACLS.Llm
                         break;
 
                     case ChatRole.ToolCall:
+                        FlushToolResult();
                         // Append as tool_use block to the current assistant message
                         if (currentAssistantContent == null)
                         {
@@ -392,24 +413,25 @@ namespace ACLS.Llm
 
                     case ChatRole.ToolResult:
                         FlushAssistant(ref currentAssistant, ref currentAssistantContent, result);
-                        result.Add(new JObject
+                        // Accumulate consecutive ToolResults into a single user message
+                        if (currentToolResultContent == null)
                         {
-                            ["role"] = "user",
-                            ["content"] = new JArray
-                            {
-                                new JObject
-                                {
-                                    ["type"] = "tool_result",
-                                    ["tool_use_id"] = msg.ToolCallId,
-                                    ["content"] = msg.Content,
-                                }
-                            }
+                            currentToolResultUser = new JObject { ["role"] = "user" };
+                            currentToolResultContent = new JArray();
+                            currentToolResultUser["content"] = currentToolResultContent;
+                        }
+                        currentToolResultContent.Add(new JObject
+                        {
+                            ["type"] = "tool_result",
+                            ["tool_use_id"] = msg.ToolCallId,
+                            ["content"] = msg.Content,
                         });
                         break;
                 }
             }
 
             FlushAssistant(ref currentAssistant, ref currentAssistantContent, result);
+            FlushToolResult();
             return result;
         }
 

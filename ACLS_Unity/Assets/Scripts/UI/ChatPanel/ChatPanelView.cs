@@ -391,6 +391,17 @@ namespace ACLS.UI
                 _ => "",
             };
             var lineText = $"{prefix}\n{Escape(m.Content)}";
+
+            // Append token usage for assistant messages (右下角小字)
+            if (m.Role == ChatRole.Assistant && bridge != null)
+            {
+                var usage = bridge.LastUsage;
+                if (usage.HasData)
+                {
+                    lineText += $"\n<size=14><color=#555555><align=right>in {usage.InputTokens} · out {usage.OutputTokens} · ∑{bridge.CumulativeUsage.Total}</align></color></size>";
+                }
+            }
+
             CreateMessageItem(lineText);
             ScrollToBottom();
         }

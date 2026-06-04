@@ -488,11 +488,8 @@ namespace ACLS.UI
                 stateMachine?.TransitionTo(GameState.Dialogue);
 
                 var charPreset = NewGamePresets.ToCharacterPreset(ngPreset);
-                chat.ExpandCharacter(charPreset, _ =>
-                {
-                    // 流水线已完成 L1 场景构建，直接开始开场叙事
-                    chat.StartOpening(charPreset);
-                });
+                // 流水线已完成 L1 场景构建，直接开始开场叙事
+                chat.StartOpening(charPreset);
             });
         }
 
@@ -542,10 +539,7 @@ namespace ACLS.UI
                         Blurb = blurb,
                     };
 
-                    chat.ExpandCharacter(tempPreset, _ =>
-                    {
-                        chat.StartOpening(tempPreset);
-                    });
+                    chat.StartOpening(tempPreset);
                     return;
                 }
 
@@ -568,10 +562,7 @@ namespace ACLS.UI
                     Blurb = customCharDesc,
                 };
 
-                chat.ExpandCharacter(fallbackPreset, _ =>
-                {
-                    chat.StartStageCreate(fallbackPreset, __ => chat.StartOpening(fallbackPreset));
-                });
+                chat.StartStageCreate(fallbackPreset, _ => chat.StartOpening(fallbackPreset));
             });
         }
     }

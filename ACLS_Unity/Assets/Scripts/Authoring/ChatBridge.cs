@@ -203,25 +203,6 @@ namespace ACLS.Authoring
             });
         }
 
-        // Called once after character creation to let the LLM flesh out
-        // family, social circle, secrets and assets.
-        public void ExpandCharacter(CharacterPresets.Preset preset, Action<bool> onComplete)
-        {
-            if (!Ready || preset == null || world?.Player == null)
-            {
-                onComplete?.Invoke(false);
-                return;
-            }
-            if (PromptConfig == null || string.IsNullOrWhiteSpace(PromptConfig.WorldCreatePrompt))
-            {
-                onComplete?.Invoke(false);
-                return;
-            }
-
-            // TransitionTo(StagePlay) is now owned by StartStageCreate (called after this).
-            orchestrator?.ExpandCharacter(preset, world.Player, onComplete);
-        }
-
         // Kicks off the first LLM call right after stage creation.
         public void StartOpening(CharacterPresets.Preset preset)
         {
@@ -240,7 +221,7 @@ namespace ACLS.Authoring
             // Show human-readable text in the chat panel.
             OnMessage?.Invoke(new ChatMessage(ChatRole.User, text));
 
-            string action = $"[玩家自由行动：{text}] 请承接上文，描写下一幕，并给出 3-4 个新选项。";
+            string action = $"[玩家自由行动：{text}] 请承接上文，描写下一幕，并给出 1-4 个新选项。";
             orchestrator?.SendAction(action, displayText: action);
         }
 

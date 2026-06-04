@@ -59,6 +59,7 @@ namespace ACLS.Sim
         public override bool Equals(object obj) => obj is GameDate d && Equals(d);
         public override int GetHashCode() => unchecked(Year * 397 ^ Month * 31 ^ Day);
         public override string ToString() => $"{Year}年{Month}月{Day}日";
+        public string ToLLMString() => $"{Year:D4}年{Month:D2}月{Day:D2}日";
 
         public static bool operator <(GameDate a, GameDate b) => a.CompareTo(b) < 0;
         public static bool operator >(GameDate a, GameDate b) => a.CompareTo(b) > 0;

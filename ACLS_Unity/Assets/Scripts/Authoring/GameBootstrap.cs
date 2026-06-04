@@ -153,13 +153,11 @@ namespace ACLS.Authoring
             var cfg = ScriptableObject.CreateInstance<LlmPromptConfig>();
 
             var sysMd = ContentLoader.LoadSync<TextAsset>("Assets/Content/Prompts/SysPrompt.md", "Prompts/SysPrompt");
-            var expMd = ContentLoader.LoadSync<TextAsset>("Assets/Content/Prompts/CharacterExpansion.md", "Prompts/CharacterExpansion");
 
             cfg.SystemPromptMd = sysMd ?? CreateInlineTextAsset("SystemPrompt.md", BuiltInSystemPrompt());
-            cfg.WorldCreatePromptMd = expMd ?? CreateInlineTextAsset("CharacterExpansion.md", BuiltInExpansionPrompt());
 
-            if (sysMd == null || expMd == null)
-                Log.Info(Log.Channels.System, "未找到 Resources/Prompts/*.md，使用内置默认提示词。建议在 Resources/Prompts/ 下放 .md 文件以便自定义。");
+            if (sysMd == null)
+                Log.Info(Log.Channels.System, "未找到 Resources/Prompts/SysPrompt.md，使用内置默认提示词。建议在 Resources/Prompts/ 下放 .md 文件以便自定义。");
 
             return cfg;
         }
@@ -199,10 +197,11 @@ namespace ACLS.Authoring
                 "- 选择有回响：今天的决定，三天后、七天后、一个月后有后果。善有善报，恶有恶果。\n" +
                 "- 可压两三件事同时烧（时间紧、资源不够、信息不全），但必须在叙事中留线索和出口。\n" +
                 "\n" +
-                "user message 若含「[开场]」字样，表明玩家刚在建角面板选定身份（含一段背景 blurb）；请据此描写主角的第一次登场场景与 3-4 个开局选项。后续回合按常规推进。\n" +
+                "user message 若含「[开场]」字样，表明玩家刚在建角面板选定身份（含一段背景 blurb）；请据此描写主角的第一次登场场景与 1-4 个开局选项。后续回合按常规推进。\n" +
                 "\n" +
                 "每次回复严格使用 JSON：\n" +
                 "{\n" +
+                "  \"date\": \"<当前叙事日期，格式如 0184年01月08日>\",\n" +
                 "  \"narration\": \"<2-4 段中文叙事>\",\n" +
                 "  \"scene_participants\": [ {\"name\": \"<人名>\", \"role\": \"<你/妻/友/客/敌/旁观/...>\"} ],\n" +
                 "  \"choices\": [\n" +
@@ -221,53 +220,10 @@ namespace ACLS.Authoring
                 "  ]\n" +
                 "}\n" +
                 "\n" +
-                "返回 3-4 个选项。effects 数组可空。\n" +
+                "返回 1-4 个选项。effects 数组可空。\n" +
                 "字数控制：narration ≤ 250 字；每个 outcome_narration 100-180 字；scene_participants ≤ 5 人。\n" +
                 "stat delta 单次幅度 ±1~3，不超过 ±5。\n" +
                 "不要任何 JSON 之外的文字（含 ``` 围栏）。";
-        }
-
-        private static string BuiltInExpansionPrompt()
-        {
-            return "你是一位精通东汉末年历史的角色设定师。玩家刚创建了一个新角色，请基于以下信息，为该角色生成详细的背景设定。\n" +
-                "\n" +
-                "【角色基础信息】\n" +
-                "姓名：{name}\n" +
-                "字：{courtesy}\n" +
-                "性别：{sex}\n" +
-                "年龄：{age} 岁\n" +
-                "出身地：{location}\n" +
-                "背景简述：{blurb}\n" +
-                "当前日期：{date}\n" +
-                "核心特质：{trait}\n" +
-                "\n" +
-                "【时代背景】\n" +
-                "184 年正月，黄巾起义在即。朝政日衰，宦官擅权，太平道兴起。\n" +
-                "\n" +
-                "【要求】\n" +
-                "请用 JSON 格式返回角色的详细设定：\n" +
-                "{\n" +
-                "  \"family_background\": \"<2-3 句，描述父母、兄弟、家庭状况>\",\n" +
-                "  \"social_circle\": [\n" +
-                "    {\"name\": \"<人名>\", \"relation\": \"<与主角的关系>\", \"attitude_toward_player\": \"<态度>\"}\n" +
-                "  ],\n" +
-                "  \"recent_goal\": \"<主角近期最想达成的事，1 句>\",\n" +
-                "  \"secret\": \"<主角的一个秘密或软肋，1 句>\",\n" +
-                "  \"values\": \"<主角的核心价值观，1 句>\",\n" +
-                "  \"starting_assets\": {\n" +
-                "    \"connections\": [\"人脉1\", \"人脉2\"],\n" +
-                "    \"knowledge\": [\"情报1\", \"情报2\"],\n" +
-                "    \"items\": [\"随身物品1\", \"随身物品2\"]\n" +
-                "  }\n" +
-                "}\n" +
-                "\n" +
-                "要求：\n" +
-                "- 所有人名使用东汉风格（姓氏+名，如 赵嵩、刘勇）\n" +
-                "- 社会关系 2-5 人，每人必须有明确的态度（友善/中立/戒备/敌对）\n" +
-                "- secret 必须合理且有趣，能驱动后续剧情（不可过于离奇）\n" +
-                "- values 要与核心特质一致\n" +
-                "- 不得与已知史实人物产生血缘/婚约等不当关联\n" +
-                "- 不要任何 JSON 之外的文字（含 ``` 围栏）。";
         }
     }
 }

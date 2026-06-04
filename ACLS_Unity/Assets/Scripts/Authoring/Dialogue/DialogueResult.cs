@@ -23,6 +23,7 @@ namespace ACLS.Authoring
         public string SuggestedNextState = "";   // e.g. "Dialogue"
         public List<string> SkillTriggers = new List<string>();
         public int DaysPassed = 0;
+        public Sim.GameDate? Date;               // explicit date from LLM, if provided
 
         // -------- meta --------
         public bool IsError;

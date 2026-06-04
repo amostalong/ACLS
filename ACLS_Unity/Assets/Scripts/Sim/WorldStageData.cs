@@ -18,6 +18,7 @@ namespace ACLS.Sim
         public string L4World   = "";         // macro: era, factions, history anchors
         public string L3Expanse = "";         // regional: power distribution, indirect intel
         public string L2Arena   = "";         // near: 3-14 day contacts, active pressures, opportunities
+        public string L2Expansion = "";       // player expansion + storylines (generated after L2, before L1)
         public string L1Stage   = "";         // immediate: current scene state (refreshed each scene)
 
         public bool IsWorldBuilt => !string.IsNullOrWhiteSpace(L4World);

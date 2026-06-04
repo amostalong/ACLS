@@ -25,7 +25,7 @@ namespace ACLS.Authoring
             string action =
                 "[开场] 玩家已选定身份。\n" +
                 $"[背景]：{preset?.Blurb}{bg}\n" +
-                "请按当前世界状态描写主角的第一次登场场景，并给出 3-4 个开局选项。";
+                "请按当前世界状态描写主角的第一次登场场景，并给出 1-4 个开局选项。";
             return Orchestrator?.PromptAssembler?.Assemble(StateType, action) ?? "";
         }
 
@@ -57,6 +57,10 @@ namespace ACLS.Authoring
             result.Participants = reply.SceneParticipants ?? new List<LlmReply.Participant>();
             result.Choices = reply.Choices ?? new List<LlmReply.Choice>();
 
+            // 日期：LLM 回复中若有则解析
+            if (!string.IsNullOrWhiteSpace(reply.Date))
+                result.Date = TryParseDate(reply.Date);
+
             // Extract system-level fields.
             // Priority: _system block (new) > choice-level fields (legacy).
             if (reply.System != null)
@@ -76,6 +80,27 @@ namespace ACLS.Authoring
             }
 
             return result;
+        }
+
+        // Try to parse LLM date format: "0184年01月08日"
+        private static Sim.GameDate? TryParseDate(string s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return null;
+            try
+            {
+                // Match 4-digit-year 年 2-digit-month 月 2-digit-day 日
+                var m = System.Text.RegularExpressions.Regex.Match(s.Trim(), @"(\d{1,4})年(\d{1,2})月(\d{1,2})日");
+                if (m.Success)
+                {
+                    int y = int.Parse(m.Groups[1].Value);
+                    int mo = int.Parse(m.Groups[2].Value);
+                    int d = int.Parse(m.Groups[3].Value);
+                    if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31)
+                        return new Sim.GameDate(y, mo, d);
+                }
+            }
+            catch { }
+            return null;
         }
     }
 }
