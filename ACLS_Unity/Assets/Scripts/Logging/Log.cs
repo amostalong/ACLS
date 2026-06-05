@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using UnityEngine;
 
 namespace ACLS.Logging
@@ -35,12 +36,48 @@ namespace ACLS.Logging
             public const string Network   = "Network";
         }
 
+        // ──── 主线程上下文（供后台线程投递 Debug.Log，确保 Console 即时显示） ────
+        private static SynchronizationContext _mainContext;
+
+        /// <summary>
+        /// 设置主线程 SynchronizationContext。RuntimeLogger 初始化时调用。
+        /// 在此之后，Log.Write 在后台线程被调用时会投递 Debug.Log 到主线程，
+        /// 避免 Unity Console 因跨线程排队而延迟显示。
+        /// </summary>
+        public static void SetMainContext(SynchronizationContext ctx)
+        {
+            _mainContext = ctx;
+        }
+
         // ──── 级别配置 ────
         private static readonly Dictionary<string, int> _levels =
             new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         private const int DefaultLevel = (int)LogLevel.Info;
 
         private static readonly object _lock = new object();
+
+        // ──── 全局级别覆盖（null = 使用各频道独立级别） ────
+        private static int? _globalLevel = null;
+
+        /// <summary>设置全局日志级别覆盖。null 恢复各频道独立级别。</summary>
+        public static void SetGlobalLevel(LogLevel? level)
+        {
+            lock (_lock)
+            {
+                _globalLevel = level.HasValue ? (int)level.Value : (int?)null;
+            }
+        }
+
+        /// <summary>获取当前全局日志级别覆盖，null 表示未设置。</summary>
+        public static LogLevel? GetGlobalLevel()
+        {
+            lock (_lock)
+            {
+                if (_globalLevel.HasValue)
+                    return (LogLevel)_globalLevel.Value;
+                return null;
+            }
+        }
 
         /// <summary>设置某个频道的日志级别。低于该级别的日志将被抑制。</summary>
         public static void SetLevel(string channel, LogLevel level)
@@ -63,18 +100,14 @@ namespace ACLS.Logging
         {
             if (string.IsNullOrWhiteSpace(channel)) return false;
             int min;
-            if (!_levels.TryGetValue(channel.Trim(), out min))
+            if (_globalLevel.HasValue)
+                min = _globalLevel.Value;
+            else if (!_levels.TryGetValue(channel.Trim(), out min))
                 min = DefaultLevel;
             return (int)level >= min;
         }
 
         // ──── 写入方法 ────
-
-        public static void Trace(string channel, string message) =>
-            Write(LogLevel.Trace, channel, message);
-
-        public static void Trace(string channel, string format, params object[] args) =>
-            Write(LogLevel.Trace, channel, string.Format(format, args));
 
         public static void Debug(string channel, string message) =>
             Write(LogLevel.Debug, channel, message);
@@ -100,12 +133,6 @@ namespace ACLS.Logging
         public static void Error(string channel, string format, params object[] args) =>
             Write(LogLevel.Error, channel, string.Format(format, args));
 
-        public static void Fatal(string channel, string message) =>
-            Write(LogLevel.Fatal, channel, message);
-
-        public static void Fatal(string channel, string format, params object[] args) =>
-            Write(LogLevel.Fatal, channel, string.Format(format, args));
-
         // ──── 内部实现 ────
 
         private static void Write(LogLevel level, string channel, string message)
@@ -119,9 +146,22 @@ namespace ACLS.Logging
                 : channel;
             string formatted = $"{prefix} {message}";
 
+            // 后台线程 → 投递到主线程执行 Debug.Log，确保 Console 即时显示
+            // （RuntimeLogger 通过 logMessageReceivedThreaded 捕获写文件，不受影响）
+            if (_mainContext != null && SynchronizationContext.Current != _mainContext)
+            {
+                _mainContext.Post(_ => LogToUnityConsole(level, formatted), null);
+                return;
+            }
+
+            LogToUnityConsole(level, formatted);
+        }
+
+        /// <summary>实际调用 Unity Debug 系列 API。主线程/分发目标执行。</summary>
+        private static void LogToUnityConsole(LogLevel level, string formatted)
+        {
             switch (level)
             {
-                case LogLevel.Trace:
                 case LogLevel.Debug:
                 case LogLevel.Info:
                     UnityEngine.Debug.Log(formatted);
@@ -130,7 +170,6 @@ namespace ACLS.Logging
                     UnityEngine.Debug.LogWarning(formatted);
                     break;
                 case LogLevel.Error:
-                case LogLevel.Fatal:
                     UnityEngine.Debug.LogError(formatted);
                     break;
             }

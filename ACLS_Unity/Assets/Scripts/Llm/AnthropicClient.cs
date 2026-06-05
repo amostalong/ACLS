@@ -270,6 +270,9 @@ namespace ACLS.Llm
                 StopReason = stopReason,
             };
 
+            if (verbose) Log.Info(Log.Channels.Network, "[Anthropic] ← {0} chars tools={1} stop={2}",
+                result.Content.Length, toolCalls.Count, stopReason);
+
             return result;
         }
 

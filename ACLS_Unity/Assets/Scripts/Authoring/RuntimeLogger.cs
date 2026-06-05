@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Text;
+using System.Threading;
 using ACLS.Logging;
 using UnityEngine;
 
@@ -56,6 +57,10 @@ namespace ACLS.Authoring
 
                 // Surface the path so I can find it from the editor console too.
                 Log.Info(Log.Channels.System, "writing to {0}", LogPath);
+
+                // 将主线程 SynchronizationContext 传给 Log，使后台线程的 Debug.Log
+                // 能投递到主线程执行，保证 Unity Console 即时显示。
+                Log.SetMainContext(SynchronizationContext.Current);
             }
             catch (Exception ex)
             {
@@ -112,6 +117,10 @@ namespace ACLS.Authoring
                             }
                         }
                     }
+
+                    // ★ 强制刷新 FileStream 缓冲区，确保日志即时写入 OS / 文件
+                    //    （AutoFlush 只保证 StreamWriter→FileStream，不保证 FileStream→OS）
+                    writer.Flush();
                 }
                 catch { /* don't recurse */ }
             }

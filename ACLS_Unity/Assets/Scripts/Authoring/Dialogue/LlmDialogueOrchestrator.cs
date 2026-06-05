@@ -49,6 +49,9 @@ namespace ACLS.Authoring
         public event Action<string> OnError;                   // human-readable error
         public event Action<LlmUsage, LlmUsage> OnUsage;       // (last, cumulative)
         public event Action<string> OnThinkingChanged;
+        public event Action<string> OnNarrationDelta;          // streaming narration delta
+        public event Action<string> OnSystemDelta;             // system status delta (pipeline progress, etc.)
+        public event Action OnStreamingBegin;                  // fired before each new streaming call
 
         // ---- tools ----
         public ToolRegistry ToolRegistry { get; } = ToolRegistry.Instance;
@@ -192,6 +195,7 @@ namespace ACLS.Authoring
             }
 
             Log.Info(Log.Channels.Llm, "▶ StartWorldBuild: role={0} world={1}", Truncate(roleDescription ?? "", 60), Truncate(worldDescription ?? "", 60));
+            EmitSystemStatus("正在构建世界观…");
             var state = new WorldBuildState(this, roleDescription ?? "", worldDescription ?? "");
             string prompt = state.AssemblePrompt();
 
@@ -221,6 +225,7 @@ namespace ACLS.Authoring
                     OnNarration?.Invoke(result.Narration);
                 }
                 SaveManager.Save(World, GameMemory.Instance);
+                EmitSystemStatus("世界观构建完成 ✓");
                 onComplete?.Invoke(true);
             }
             catch (OperationCanceledException)
@@ -277,6 +282,7 @@ namespace ACLS.Authoring
             {
                 // ══════ Step 1: World（世界观设定） ══════
                 Log.Info(Log.Channels.Llm, "▸ 流水线 Step 1/6: WorldBuild");
+                EmitSystemStatus("正在构建世界观设定 (1/6)…");
                 {
                     string fragment = LoadFragment("Fragment_WorldBuild");
                     string prompt = fragment
@@ -324,10 +330,12 @@ namespace ACLS.Authoring
                     }
                     SaveManager.Save(World, GameMemory.Instance);
                     Log.Info(Log.Channels.Llm, "[OK] Step 1/6 WorldBuild 完成");
+                    EmitSystemStatus("世界观设定完成 ✓");
                 }
 
                 // ══════ Step 2: L4（宏观势力） ══════
                 Log.Info(Log.Channels.Llm, "▸ 流水线 Step 2/6: L4Build");
+                EmitSystemStatus("正在构建宏观势力格局 (2/6)…");
                 {
                     string fragment = LoadFragment("Fragment_L4Build");
                     string prompt = fragment
@@ -361,10 +369,12 @@ namespace ACLS.Authoring
                     }
                     SaveManager.Save(World, GameMemory.Instance);
                     Log.Info(Log.Channels.Llm, "[OK] Step 2/6 L4Build 完成，{0} 个势力", l4Factions.Factions.Count);
+                    EmitSystemStatus("宏观势力格局构建完成 ✓");
                 }
 
                 // ══════ Step 3: L3（区域势力） ══════
                 Log.Info(Log.Channels.Llm, "▸ 流水线 Step 3/6: L3Build");
+                EmitSystemStatus("正在构建区域势力网络 (3/6)…");
                 {
                     string fragment = LoadFragment("Fragment_L3Build");
                     string prompt = fragment
@@ -399,10 +409,12 @@ namespace ACLS.Authoring
                     }
                     SaveManager.Save(World, GameMemory.Instance);
                     Log.Info(Log.Channels.Llm, "[OK] Step 3/6 L3Build 完成，{0} 个区域势力", l3Factions.Factions.Count);
+                    EmitSystemStatus("区域势力网络构建完成 ✓");
                 }
 
                 // ══════ Step 4: L2（近域网络） ══════
                 Log.Info(Log.Channels.Llm, "▸ 流水线 Step 4/6: L2Build");
+                EmitSystemStatus("正在构建近域人际网络 (4/6)…");
                 {
                     string fragment = LoadFragment("Fragment_L2Build");
                     string prompt = fragment
@@ -458,10 +470,12 @@ namespace ACLS.Authoring
                     SaveManager.Save(World, GameMemory.Instance);
                     Log.Info(Log.Channels.Llm, "[OK] Step 4/6 L2Build 完成: chars={0} factions={1} places={2}",
                         l2Entities.Chars.Count, l2Entities.Factions.Count, l2Entities.Places.Count);
+                    EmitSystemStatus("近域人际网络构建完成 ✓");
                 }
 
                 // ══════ Step 5: PlayerExpansion + Storyline ══════
                 Log.Info(Log.Channels.Llm, "▸ 流水线 Step 5/6: PlayerExpansion + Storyline");
+                EmitSystemStatus("正在扩展角色设定与故事线 (5/6)…");
                 {
                     string fragment = LoadFragment("Fragment_PlayerExpandStoryline");
                     string prompt = fragment
@@ -539,10 +553,12 @@ namespace ACLS.Authoring
                     }
                     SaveManager.Save(World, GameMemory.Instance);
                     Log.Info(Log.Channels.Llm, "[OK] Step 5/6 PlayerExpansion + Storyline 完成: storylines={0}", peReply.Storylines.Count);
+                    EmitSystemStatus("角色设定与故事线扩展完成 ✓");
                 }
 
                 // ══════ Step 6: L1（当前场景） ══════
                 Log.Info(Log.Channels.Llm, "▸ 流水线 Step 6/6: L1Build");
+                EmitSystemStatus("正在构建初始场景 (6/6)…");
                 {
                     string prompt = $@"## 当前任务：构建初始 L1 场景
 
@@ -616,10 +632,12 @@ namespace ACLS.Authoring
                     }
                     SaveManager.Save(World, GameMemory.Instance);
                     Log.Info(Log.Channels.Llm, "[OK] Step 6/6 L1Build 完成");
+                    EmitSystemStatus("初始场景构建完成 ✓");
                 }
 
                 // ══════ 全部完成 ══════
                 Log.Info(Log.Channels.Llm, "[OK] 世界流水线全部完成");
+                EmitSystemStatus("世界构建全部完成，准备开始游戏 🎮");
                 onComplete?.Invoke(true);
             }
             catch (OperationCanceledException)
@@ -656,6 +674,7 @@ namespace ACLS.Authoring
             }
 
             Log.Info(Log.Channels.Llm, "▶ StartL1Builder");
+            EmitSystemStatus("正在构建初始场景…");
             var state = new L1BuilderState(this);
             string prompt = state.AssemblePrompt();
 
@@ -686,6 +705,7 @@ namespace ACLS.Authoring
                     OnNarration?.Invoke(result.Narration);
                 }
                 SaveManager.Save(World, GameMemory.Instance);
+                EmitSystemStatus("初始场景构建完成 ✓");
                 onComplete?.Invoke(true);
             }
             catch (OperationCanceledException)
@@ -722,6 +742,7 @@ namespace ACLS.Authoring
             }
 
             Log.Info(Log.Channels.Llm, "▶ StartStageCreate: preset={0}", preset?.Title ?? preset?.Blurb);
+            EmitSystemStatus("正在生成舞台与初始场景…");
             var state = new StageCreateState(this, preset);
             string prompt = state.AssemblePrompt();
 
@@ -751,6 +772,7 @@ namespace ACLS.Authoring
                     OnNarration?.Invoke(result.Narration);
                 }
                 SaveManager.Save(World, GameMemory.Instance);
+                EmitSystemStatus("舞台与初始场景生成完成 ✓");
                 onComplete?.Invoke(true);
             }
             catch (OperationCanceledException)
@@ -865,6 +887,15 @@ namespace ACLS.Authoring
                 UniTask.Post(() => OnThinkingChanged?.Invoke(currentThinking));
         }
 
+        private void EmitSystemStatus(string message)
+        {
+            if (string.IsNullOrEmpty(message)) return;
+            if (PlayerLoopHelper.IsMainThread)
+                OnSystemDelta?.Invoke(message);
+            else
+                UniTask.Post(() => OnSystemDelta?.Invoke(message));
+        }
+
         private static IReadOnlyList<ChatMessage> EnsureMessages(IReadOnlyList<ChatMessage> messages)
         {
             if (messages == null || messages.Count == 0)
@@ -876,10 +907,13 @@ namespace ACLS.Authoring
             IReadOnlyList<ChatMessage> messages, CancellationToken ct)
         {
             SetThinking("");
+            OnStreamingBegin?.Invoke();
 
             var raw = new StringBuilder();
             string last = "";
             int lastEmit = Environment.TickCount;
+            string lastNarration = "";
+            int lastNarrationEmit = Environment.TickCount;
 
             messages = EnsureMessages(messages);
 
@@ -897,7 +931,23 @@ namespace ACLS.Authoring
                         SetThinking(t);
                     }
                 }
+                if (TryExtractNarration(raw, out var n) && n != lastNarration)
+                {
+                    lastNarration = n;
+                    int now = Environment.TickCount;
+                    if (now - lastNarrationEmit >= 50)
+                    {
+                        lastNarrationEmit = now;
+                        if (PlayerLoopHelper.IsMainThread)
+                            OnNarrationDelta?.Invoke(n);
+                        else
+                            UniTask.Post(() => OnNarrationDelta?.Invoke(n));
+                    }
+                }
             }, ct);
+
+            // ── 流结束后，发出最后一次完整 narration delta（确保打字机看到完整文本） ──
+            EmitFinalNarrationDelta(raw);
 
             // 日志输出 LLM 流式响应汇总
             Log.Info(Log.Channels.Llm, "[OK] 收到完整流式响应 | 总长度={0}", raw.Length);
@@ -910,6 +960,9 @@ namespace ACLS.Authoring
             // Record in debug panel (always on main thread).
             string reqJson = $"{{\"model\":\"...\",\"system\":{EscapeJson(prompt)},\"messages\":[{string.Join(",", messages.Select(m => $"{{\"role\":\"{m.Role}\",\"content\":{EscapeJson(m.Content)}}}"))}]}}";
             LlmDebugLog.Add(GetProviderLabel(), reqJson, resp.Content);
+
+            // 等待打字机输出完成（简单测试：固定 5 秒）
+            await Task.Delay(5000, ct);
 
             return resp;
         }
@@ -924,6 +977,7 @@ namespace ACLS.Authoring
         {
             SetThinking("");
 
+            OnStreamingBegin?.Invoke();
             var tools = ToolRegistry.GetAllDefinitions();
             Log.Info(Log.Channels.Llm, "[Tool] 可用工具({0}个): {1}",
                 tools.Count, string.Join(", ", tools.Select(t => t.Name)));
@@ -932,6 +986,8 @@ namespace ACLS.Authoring
             var raw = new StringBuilder();
             string last = "";
             int lastEmit = Environment.TickCount;
+            string lastNarration = "";
+            int lastNarrationEmit = Environment.TickCount;
 
             int loopCount = 0;
             const int maxToolLoops = 10;
@@ -941,6 +997,7 @@ namespace ACLS.Authoring
                 loopCount++;
                 raw.Clear();
                 last = "";
+                lastNarration = "";
 
                 // 日志：本轮发送的消息列表（含已累积的工具调用/结果）
                 if (workingMessages.Count > 1)
@@ -972,6 +1029,19 @@ namespace ACLS.Authoring
                                 SetThinking(t);
                             }
                         }
+                        if (TryExtractNarration(raw, out var n) && n != lastNarration)
+                        {
+                            lastNarration = n;
+                            int now = Environment.TickCount;
+                            if (now - lastNarrationEmit >= 50)
+                            {
+                                lastNarrationEmit = now;
+                                if (PlayerLoopHelper.IsMainThread)
+                                    OnNarrationDelta?.Invoke(n);
+                                else
+                                    UniTask.Post(() => OnNarrationDelta?.Invoke(n));
+                            }
+                        }
                     }, ct);
 
                 TrackUsage(resp.Usage);
@@ -981,12 +1051,19 @@ namespace ACLS.Authoring
                     // 纯文本回复——完成
                     Log.Info(Log.Channels.Llm, "[OK] 工具循环完成 (共{0}轮) | 内容长度={1}",
                         loopCount, raw.Length);
+
+                    // ── 发出最后一次完整 narration delta（确保打字机看到完整文本） ──
+                    EmitFinalNarrationDelta(raw);
+
                     resp.Content = raw.ToString();
 
                     // 日志输出 thinking + 回复内容
                     if (TryExtractThinking(raw, out var finalThinking) && !string.IsNullOrWhiteSpace(finalThinking))
                         Log.Info(Log.Channels.Llm, "[Think] Thinking:\n{0}", finalThinking);
                     Log.Info(Log.Channels.Llm, "[Resp] Response:\n{0}", raw.ToString());
+
+                    // 等待打字机输出完成（简单测试：固定 5 秒）
+                    await Task.Delay(5000, ct);
 
                     return resp;
                 }
@@ -1071,16 +1148,17 @@ namespace ACLS.Authoring
             return "\"" + s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r").Replace("\t", "\\t") + "\"";
         }
 
-        private static bool TryExtractThinking(StringBuilder raw, out string thinking)
+        private static bool TryExtractJsonStringField(StringBuilder raw, string fieldName, out string value)
         {
-            thinking = "";
+            value = "";
             if (raw == null || raw.Length == 0) return false;
 
             string s = raw.ToString();
-            int key = s.IndexOf("\"thinking\"", StringComparison.Ordinal);
-            if (key < 0) return false;
+            string key = "\"" + fieldName + "\"";
+            int idx = s.IndexOf(key, StringComparison.Ordinal);
+            if (idx < 0) return false;
 
-            int i = key + "\"thinking\"".Length;
+            int i = idx + key.Length;
             while (i < s.Length && s[i] != ':') i++;
             if (i >= s.Length) return false;
             i++;
@@ -1108,12 +1186,33 @@ namespace ACLS.Authoring
                     continue;
                 }
                 if (c == '\\') { esc = true; continue; }
-                if (c == '"') { thinking = sb.ToString(); return true; }
+                if (c == '"') { value = sb.ToString(); return true; }
                 sb.Append(c);
             }
 
-            thinking = sb.ToString();
+            value = sb.ToString();
             return true;
+        }
+
+        private static bool TryExtractThinking(StringBuilder raw, out string thinking)
+            => TryExtractJsonStringField(raw, "thinking", out thinking);
+
+        private static bool TryExtractNarration(StringBuilder raw, out string narration)
+            => TryExtractJsonStringField(raw, "narration", out narration);
+
+        /// <summary>
+        /// 流结束后发出最后一次完整的 narration delta，确保打字机效果始终看到完整文本。
+        /// </summary>
+        private void EmitFinalNarrationDelta(StringBuilder raw)
+        {
+            if (raw == null || raw.Length == 0) return;
+            if (!TryExtractNarration(raw, out var finalNarration)) return;
+            if (string.IsNullOrWhiteSpace(finalNarration)) return;
+
+            if (PlayerLoopHelper.IsMainThread)
+                OnNarrationDelta?.Invoke(finalNarration);
+            else
+                UniTask.Post(() => OnNarrationDelta?.Invoke(finalNarration));
         }
 
         private void HandleResult(DialogueState state, DialogueResult result)
@@ -1439,7 +1538,7 @@ namespace ACLS.Authoring
             if (open < 0 || close <= open)
             {
                 Log.Warn(Log.Channels.Llm, "[L1] 未找到 JSON 大括号，raw长度={0}", raw?.Length ?? 0);
-                Log.Trace(Log.Channels.Llm, "[L1] raw={0}", Truncate(raw ?? "", 300));
+                Log.Debug(Log.Channels.Llm, "[L1] raw={0}", Truncate(raw ?? "", 300));
                 return (false, "", "");
             }
 
@@ -1448,7 +1547,7 @@ namespace ACLS.Authoring
             catch (System.Exception ex)
             {
                 Log.Warn(Log.Channels.Llm, "[L1] JSON 解析异常: {0}", ex.Message);
-                Log.Trace(Log.Channels.Llm, "[L1] json文本前300字={0}", Truncate(text.Substring(open, Math.Min(300, close - open + 1)), 300));
+                Log.Debug(Log.Channels.Llm, "[L1] json文本前300字={0}", Truncate(text.Substring(open, Math.Min(300, close - open + 1)), 300));
                 return (false, "", "");
             }
 
@@ -1467,7 +1566,7 @@ namespace ACLS.Authoring
                 ? ((string)l1["immediate_situation"] ?? "").Trim()
                 : ((string)obj["immediate_situation"] ?? "").Trim();
 
-            Log.Trace(Log.Channels.Llm, "[L1] 解析: location=[{0}] scene长度={1} situation长度={2}",
+            Log.Debug(Log.Channels.Llm, "[L1] 解析: location=[{0}] scene长度={1} situation长度={2}",
                 location, scene.Length, situation.Length);
 
             if (!string.IsNullOrWhiteSpace(location)) sb.AppendLine($"[所在] {location}");
@@ -1516,7 +1615,7 @@ namespace ACLS.Authoring
             if (sb.Length == 0)
             {
                 Log.Warn(Log.Channels.Llm, "[L1] 构建的文本为空，但 JSON 解析成功。检查 l1_stage 字段是否缺失或为空。");
-                Log.Trace(Log.Channels.Llm, "[L1] JSON top-level keys: {0}",
+                Log.Debug(Log.Channels.Llm, "[L1] JSON top-level keys: {0}",
                     string.Join(", ", obj.Properties().Select(p => p.Name)));
             }
 

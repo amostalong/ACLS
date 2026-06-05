@@ -107,7 +107,7 @@ namespace ACLS.Llm
             reply = null;
             error = null;
 
-            if (string.IsNullOrWhiteSpace(raw)) { error = "LLM 返回为空"; Log.Warn(Log.Channels.WorldBuild, "❌ {0}", error); Log.Trace(Log.Channels.WorldBuild, "原始响应为空"); return false; }
+            if (string.IsNullOrWhiteSpace(raw)) { error = "LLM 返回为空"; Log.Warn(Log.Channels.WorldBuild, "❌ {0}", error); Log.Debug(Log.Channels.WorldBuild, "原始响应为空"); return false; }
 
             string text = raw.Trim();
             if (text.StartsWith("```"))
@@ -121,7 +121,7 @@ namespace ACLS.Llm
 
             int open = text.IndexOf('{');
             int close = text.LastIndexOf('}');
-            if (open < 0 || close <= open) { error = "未找到 JSON 对象"; Log.Warn(Log.Channels.WorldBuild, "❌ {0}", error); Log.Trace(Log.Channels.WorldBuild, "原始响应:\n{0}", raw); return false; }
+            if (open < 0 || close <= open) { error = "未找到 JSON 对象"; Log.Warn(Log.Channels.WorldBuild, "❌ {0}", error); Log.Debug(Log.Channels.WorldBuild, "原始响应:\n{0}", raw); return false; }
 
             JObject obj;
             try { obj = JObject.Parse(text.Substring(open, close - open + 1)); }
@@ -129,7 +129,7 @@ namespace ACLS.Llm
             {
                 error = "JSON 解析失败：" + ex.Message;
                 Log.Warn(Log.Channels.WorldBuild, "❌ {0}", error);
-                Log.Trace(Log.Channels.WorldBuild, "原始响应:\n{0}", raw);
+                Log.Debug(Log.Channels.WorldBuild, "原始响应:\n{0}", raw);
                 return false;
             }
 
@@ -303,21 +303,21 @@ namespace ACLS.Llm
             {
                 error = "l4_world 字段缺失或为空";
                 Log.Warn(Log.Channels.WorldBuild, "❌ {0}", error);
-                Log.Trace(Log.Channels.WorldBuild, "原始响应:\n{0}", raw);
+                Log.Debug(Log.Channels.WorldBuild, "原始响应:\n{0}", raw);
                 return false;
             }
             if (string.IsNullOrWhiteSpace(result.L1Text))
             {
                 error = "l1_stage 字段缺失或为空";
                 Log.Warn(Log.Channels.WorldBuild, "❌ {0}", error);
-                Log.Trace(Log.Channels.WorldBuild, "原始响应:\n{0}", raw);
+                Log.Debug(Log.Channels.WorldBuild, "原始响应:\n{0}", raw);
                 return false;
             }
             if (result.Player == null || string.IsNullOrWhiteSpace(result.Player.Name))
             {
                 error = "p0_player 字段缺失或为空";
                 Log.Warn(Log.Channels.WorldBuild, "❌ {0}", error);
-                Log.Trace(Log.Channels.WorldBuild, "原始响应:\n{0}", raw);
+                Log.Debug(Log.Channels.WorldBuild, "原始响应:\n{0}", raw);
                 return false;
             }
 

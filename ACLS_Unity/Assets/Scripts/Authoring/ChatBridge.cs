@@ -45,6 +45,9 @@ namespace ACLS.Authoring
         public event Action<IReadOnlyList<LlmReply.Participant>> OnParticipantsChanged;
         public event Action<LlmUsage, LlmUsage> OnUsageReported;   // (lastCall, cumulative)
         public event Action<string> OnThinkingChanged;
+        public event Action<string> OnMessageDelta;
+        public event Action<string> OnSystemMessage;
+        public event Action OnStreamingBegin;
 
         private World world;
         private ILlmClient llm;
@@ -78,6 +81,21 @@ namespace ACLS.Authoring
             {
                 var msg = new ChatMessage(ChatRole.Assistant, narration);
                 OnMessage?.Invoke(msg);
+            };
+
+            orchestrator.OnNarrationDelta += narration =>
+            {
+                OnMessageDelta?.Invoke(narration);
+            };
+
+            orchestrator.OnSystemDelta += message =>
+            {
+                OnSystemMessage?.Invoke(message);
+            };
+
+            orchestrator.OnStreamingBegin += () =>
+            {
+                OnStreamingBegin?.Invoke();
             };
 
             orchestrator.OnChoices += choices =>

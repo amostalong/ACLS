@@ -79,7 +79,7 @@ namespace ACLS.Llm
             {
                 error = "LLM 返回为空";
                 Log.Warn(Log.Channels.LlmReply, "❌ 解析失败: {0}", error);
-                Log.Trace(Log.Channels.LlmReply, "原始响应为空");
+                Log.Debug(Log.Channels.LlmReply, "原始响应为空");
                 return false;
             }
 
@@ -102,7 +102,7 @@ namespace ACLS.Llm
             {
                 error = "未找到 JSON 对象（{...}）";
                 Log.Warn(Log.Channels.LlmReply, "❌ {0}", error);
-                Log.Trace(Log.Channels.LlmReply, "原始响应:\n{0}", raw);
+                Log.Debug(Log.Channels.LlmReply, "原始响应:\n{0}", raw);
                 return false;
             }
             string json = text.Substring(openIdx, closeIdx - openIdx + 1);
@@ -113,7 +113,7 @@ namespace ACLS.Llm
             {
                 error = "JSON 解析失败：" + ex.Message;
                 Log.Warn(Log.Channels.LlmReply, "❌ {0}", error);
-                Log.Trace(Log.Channels.LlmReply, "原始响应:\n{0}", raw);
+                Log.Debug(Log.Channels.LlmReply, "原始响应:\n{0}", raw);
                 return false;
             }
 
@@ -122,7 +122,7 @@ namespace ACLS.Llm
             {
                 error = "narration 字段缺失或为空";
                 Log.Warn(Log.Channels.LlmReply, "❌ {0}", error);
-                Log.Trace(Log.Channels.LlmReply, "原始响应:\n{0}", raw);
+                Log.Debug(Log.Channels.LlmReply, "原始响应:\n{0}", raw);
                 return false;
             }
 
@@ -188,7 +188,7 @@ namespace ACLS.Llm
             {
                 error = "choices 为空（场景至少要给 1 个可选行动）";
                 Log.Warn(Log.Channels.LlmReply, "❌ {0}", error);
-                Log.Trace(Log.Channels.LlmReply, "原始响应:\n{0}", raw);
+                Log.Debug(Log.Channels.LlmReply, "原始响应:\n{0}", raw);
                 return false;
             }
 

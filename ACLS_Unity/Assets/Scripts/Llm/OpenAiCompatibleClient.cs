@@ -212,11 +212,16 @@ namespace ACLS.Llm
                     toolCalls.Add(kv.Value);
             }
 
-            return new LlmResponse
+            var result = new LlmResponse
             {
                 Content = textSb.ToString(),
                 ToolCalls = toolCalls.Count > 0 ? toolCalls : null,
             };
+
+            if (verbose) Log.Info(Log.Channels.Network, "[OpenAI] ← {0} chars tools={1}",
+                result.Content.Length, toolCalls.Count);
+
+            return result;
         }
 
         // ────── 非流式请求 ──────
