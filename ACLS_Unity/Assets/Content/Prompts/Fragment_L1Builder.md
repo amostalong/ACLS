@@ -25,7 +25,7 @@
 
 - l2_arena（近域层——玩家当前的生活圈）：
   围绕主角当前位置，构建玩家短期触角所及的生活圈：
-  - chars: 短期可接触到的人，每项含 name, role, location, relation（-50~50）, reachable_in_days
+  - chars: 短期可接触到的人，每项含 name, role, location, relation（-50~50）, reachable_in_days, 及可选的社会关系字段（father, mother, siblings[], other_relatives[], core_friends[], is_important）
   - factions: 可见的势力/组织/家族，每项含 name, type, stance
   - places: 关键地点，每项含 name, type, description
   - active_events: 当前活跃的事件/压力，1-3 条，每项含 title, urgency（high/medium/low）, deadline, detail

@@ -27,7 +27,17 @@
       "role": "身份/职能",
       "location": "所在地区",
       "relation": 0,
-      "reachable_in_days": 0
+      "reachable_in_days": 0,
+
+      // 社会关系（可选）
+      "father": "父亲姓名",
+      "mother": "母亲姓名",
+      "siblings": ["兄/弟/姐/妹姓名"],
+      "other_relatives": ["其他亲戚姓名"],
+      "core_friends": ["核心朋友姓名"],
+
+      // 是否重要人物（可选）
+      "is_important": false
     }
   ],
 

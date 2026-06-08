@@ -18,7 +18,17 @@
       "role": "职能/关系",
       "location": "所在位置",
       "relation": -50~50 的整数，0 为中立，
-      "reachable_in_days": 按世界观时间单位的可联系距离，0 表示同处一地
+      "reachable_in_days": 按世界观时间单位的可联系距离，0 表示同处一地,
+
+      // 社会关系（可选）
+      "father": "父亲姓名",
+      "mother": "母亲姓名",
+      "siblings": ["兄/弟/姐/妹姓名"],
+      "other_relatives": ["其他亲戚姓名"],
+      "core_friends": ["核心朋友姓名"],
+
+      // 是否重要人物（可选，需要每次更新时重新生成）
+      "is_important": false
     }
   ],
 

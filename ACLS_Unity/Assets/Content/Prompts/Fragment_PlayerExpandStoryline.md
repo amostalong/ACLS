@@ -79,5 +79,8 @@
 - storylines 的 key_time_point 应给出具体时间（如「184年3月」「三日后」），便于后续 L1 场景编排时间线
 - storylines 的 hook 要具体，能直接用于引导 L1 的初始场景设计
 - 1-2 条故事线，每条要有不同的冲突方向
-- npc_expansions 应覆盖 players 周围的核心人物（L2 chars 中关系密切的角色），2-4 人为宜
+- **npc_expansions 必须覆盖主角附近的全部角色**，包括：
+  - L2 chars 中所有角色（无论关系亲疏）
+  - L3/L4 上下文中主角当前所在位置附近的可接触人物（即使主角尚未认识他们）
+  - 每个角色都要展开 background_story、values、current_goal、secret，越具体越好
 - npc_expansions 的内容需与已有的 L2 数据和 player_expansion 的内容一致，不可凭空编造

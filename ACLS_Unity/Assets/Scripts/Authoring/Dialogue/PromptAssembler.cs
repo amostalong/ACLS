@@ -147,7 +147,7 @@ namespace ACLS.Authoring
                 "thinking（你的推理过程，原样输出，尽量先输出该字段），" +
                 "l1_stage{location, scene_description, active_npcs:[{name,role,relation_value,stance}], immediate_situation, exits:[]}，" +
                 "l2_arena{" +
-                "chars:[{name,role,location,relation,reachable_in_days}], " +
+                "chars:[{name,role,location,relation,reachable_in_days,father,mother,siblings[],other_relatives[],core_friends[],is_important}], " +
                 "factions:[{name,type,stance}], " +
                 "places:[{name,type,description}], " +
                 "active_events:[{title,urgency(high|medium|low),deadline,detail}], opportunities:[]}。" +

@@ -16,7 +16,7 @@
 
 **L2 要求（l2_arena——玩家当前的生活圈）：**
 围绕主角当前位置，构建玩家短期触角所及的生活圈：
-- chars：短期可接触到的人，每项含 name、role、location、relation（-50~50）、reachable_in_days
+- chars：短期可接触到的人，每项含 name、role、location、relation（-50~50）、reachable_in_days，及可选的社会关系字段（father、mother、siblings[]、other_relatives[]、core_friends[]、is_important）
 - factions：可见的势力/组织/家族，每项含 name、type、stance（一句话）。可按以下方向判断：
   - 三国/古风：望族、官府、流寇、军阀、行会
   - 科幻：星际企业、殖民政府、海盗团、科研联盟

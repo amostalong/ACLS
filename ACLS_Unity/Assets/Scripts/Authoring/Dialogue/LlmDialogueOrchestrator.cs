@@ -1385,7 +1385,9 @@ namespace ACLS.Authoring
         /// <summary>实体数据容器（chars/factions/places）。所有层共用此类型。</summary>
         private sealed class Entities
         {
-            public List<(string name, string role, string location, int relation, int reachable_in_days)> Chars = new();
+            public List<(string name, string role, string location, int relation, int reachable_in_days,
+                string father, string mother, string[] siblings, string[] other_relatives, string[] core_friends,
+                bool is_important)> Chars = new();
             public List<(string name, string type, string stance)> Factions = new();
             public List<(string name, string type, string description)> Places = new();
         }
@@ -1408,7 +1410,13 @@ namespace ACLS.Authoring
                         ((string)c["role"] ?? "").Trim(),
                         ((string)c["location"] ?? "").Trim(),
                         c["relation"]?.ToObject<int>() ?? 0,
-                        c["reachable_in_days"]?.ToObject<int>() ?? 0
+                        c["reachable_in_days"]?.ToObject<int>() ?? 0,
+                        ((string)c["father"] ?? "").Trim(),
+                        ((string)c["mother"] ?? "").Trim(),
+                        c["siblings"]?.ToObject<string[]>() ?? Array.Empty<string>(),
+                        c["other_relatives"]?.ToObject<string[]>() ?? Array.Empty<string>(),
+                        c["core_friends"]?.ToObject<string[]>() ?? Array.Empty<string>(),
+                        c["is_important"]?.ToObject<bool>() ?? false
                     ));
                 }
             }
@@ -1451,7 +1459,20 @@ namespace ACLS.Authoring
         {
             if (entities == null) return;
             foreach (var c in entities.Chars)
-                GameMemory.Instance.AddChar(new CharEntry { name = c.name, role = c.role, location = c.location, relation = c.relation, reachable_in_days = c.reachable_in_days });
+                GameMemory.Instance.AddChar(new CharEntry
+                {
+                    name = c.name,
+                    role = c.role,
+                    location = c.location,
+                    relation = c.relation,
+                    reachable_in_days = c.reachable_in_days,
+                    father = c.father,
+                    mother = c.mother,
+                    siblings = c.siblings,
+                    other_relatives = c.other_relatives,
+                    core_friends = c.core_friends,
+                    is_important = c.is_important,
+                });
             foreach (var f in entities.Factions)
                 GameMemory.Instance.AddFaction(new FactionEntry { name = f.name, type = f.type, stance = f.stance });
             foreach (var p in entities.Places)
@@ -1485,8 +1506,15 @@ namespace ACLS.Authoring
                         string l = ((string)c["location"] ?? "").Trim();
                         int rel = c["relation"]?.ToObject<int>() ?? 0;
                         int days = c["reachable_in_days"]?.ToObject<int>() ?? 0;
-                        sb.AppendLine($"· {n}（{r}，{l}，关系{rel:+#;-#;0}，约{days}天）");
-                        result.Chars.Add((n, r, l, rel, days));
+                        string father = ((string)c["father"] ?? "").Trim();
+                        string mother = ((string)c["mother"] ?? "").Trim();
+                        var siblings = c["siblings"]?.ToObject<string[]>() ?? Array.Empty<string>();
+                        var otherRelatives = c["other_relatives"]?.ToObject<string[]>() ?? Array.Empty<string>();
+                        var coreFriends = c["core_friends"]?.ToObject<string[]>() ?? Array.Empty<string>();
+                        bool important = c["is_important"]?.ToObject<bool>() ?? false;
+                        sb.AppendLine($"· {n}（{r}，{l}，关系{rel:+#;-#;0}，约{days}天" +
+                            $"{(important ? "【重要】" : "")}）");
+                        result.Chars.Add((n, r, l, rel, days, father, mother, siblings, otherRelatives, coreFriends, important));
                     }
                 }
 
