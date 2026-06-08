@@ -42,7 +42,7 @@ namespace ACLS.Authoring
             {
                 world.Stage.L4World   = wb.L4Text   ?? "";
                 world.Stage.L3Expanse = wb.L3Text   ?? "";
-                // L2 由世界构建阶段写入，L1Builder 通过工具读取后可以增量更新
+                // L2 由世界构建阶段写入，后续流水线 Step 6 可增量更新
                 world.Stage.L2Arena   = wb.L2Text   ?? "";
 
                 if (world.Player == null && wb.Player != null)
