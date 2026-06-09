@@ -117,7 +117,7 @@ namespace ACLS.Llm
                 return false;
             }
 
-            string narration = (string)obj["narration"];
+            string narration = ((string)(obj["nar"] ?? obj["narration"]) ?? "");
             if (string.IsNullOrWhiteSpace(narration))
             {
                 error = "narration 字段缺失或为空";
@@ -127,16 +127,16 @@ namespace ACLS.Llm
             }
 
             var result = new LlmReply { Narration = narration.Trim() };
-            result.Thinking = ((string)obj["thinking"] ?? "").Trim();
-            result.Date = ((string)obj["date"] ?? "").Trim();
+            result.Thinking = ((string)(obj["th"] ?? obj["thinking"]) ?? "").Trim();
+            result.Date = ((string)(obj["dt"] ?? obj["date"]) ?? "").Trim();
 
             // scene_participants (optional but expected)
-            if (obj["scene_participants"] is JArray pArr)
+            if ((obj["sp"] ?? obj["scene_participants"]) is JArray pArr)
             {
                 foreach (var p in pArr)
                 {
-                    var name = (string)p["name"];
-                    var role = (string)p["role"];
+                    var name = (string)(p["n"] ?? p["name"]);
+                    var role = (string)(p["r"] ?? p["role"]);
                     if (string.IsNullOrWhiteSpace(name)) continue;
                     result.SceneParticipants.Add(new Participant
                     {
@@ -147,16 +147,16 @@ namespace ACLS.Llm
             }
 
             // choices (required for step-2; allow empty for terminal scenes but warn)
-            if (obj["choices"] is JArray cArr)
+            if ((obj["ch"] ?? obj["choices"]) is JArray cArr)
             {
                 foreach (var c in cArr)
                 {
-                    var label = (string)c["label"];
-                    var outcome = (string)c["outcome_narration"];
+                    var label = (string)(c["lb"] ?? c["label"]);
+                    var outcome = (string)(c["on"] ?? c["outcome_narration"]);
                     if (string.IsNullOrWhiteSpace(label) || string.IsNullOrWhiteSpace(outcome)) continue;
 
                     int days = 0;
-                    var dToken = c["days_passed"];
+                    var dToken = c["dp"] ?? c["days_passed"];
                     if (dToken != null && dToken.Type != JTokenType.Null)
                     {
                         try { days = (int)dToken; } catch { /* leave 0 */ }
@@ -171,7 +171,7 @@ namespace ACLS.Llm
                         DaysPassed = days,
                     };
 
-                    if (c["effects"] is JArray eArr)
+                    if ((c["ef"] ?? c["effects"]) is JArray eArr)
                     {
                         foreach (var e in eArr)
                         {
@@ -193,14 +193,14 @@ namespace ACLS.Llm
             }
 
             // _system (optional engine directives hidden from the player)
-            if (obj["_system"] is JObject sysObj)
+            if ((obj["_s"] ?? obj["_system"]) is JObject sysObj)
             {
                 result.System = new SystemBlock
                 {
-                    SuggestedState = ((string)sysObj["suggested_state"])?.Trim() ?? "",
+                    SuggestedState = ((string)(sysObj["ss"] ?? sysObj["suggested_state"]) ?? "").Trim(),
                 };
 
-                if (sysObj["skill_triggers"] is JArray skArr)
+                if ((sysObj["sk"] ?? sysObj["skill_triggers"]) is JArray skArr)
                 {
                     foreach (var sk in skArr)
                     {
@@ -210,7 +210,7 @@ namespace ACLS.Llm
                     }
                 }
 
-                if (sysObj["effects"] is JArray seArr)
+                if ((sysObj["ef"] ?? sysObj["effects"]) is JArray seArr)
                 {
                     foreach (var e in seArr)
                     {
@@ -242,16 +242,16 @@ namespace ACLS.Llm
 
         private static EffectSpec ParseEffect(JToken e)
         {
-            var kind = (string)e["kind"];
+            var kind = (string)(e["kd"] ?? e["kind"]);
             if (string.IsNullOrWhiteSpace(kind)) return null;
             return new EffectSpec
             {
                 Kind = kind.Trim(),
-                Stat = (string)e["stat"],
-                Trait = (string)e["trait"],
-                Target = (string)e["target"],
-                Flag = (string)e["flag"],
-                Delta = e["delta"]?.Type == JTokenType.Integer ? (int)e["delta"] : 0,
+                Stat = (string)(e["st"] ?? e["stat"]),
+                Trait = (string)(e["tr"] ?? e["trait"]),
+                Target = (string)(e["tg"] ?? e["target"]),
+                Flag = (string)(e["fl"] ?? e["flag"]),
+                Delta = (e["dl"] ?? e["delta"])?.Type == JTokenType.Integer ? (int)(e["dl"] ?? e["delta"]) : 0,
             };
         }
 

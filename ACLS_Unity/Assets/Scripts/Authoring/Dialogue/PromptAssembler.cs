@@ -22,6 +22,7 @@ namespace ACLS.Authoring
         // Builds the full prompt for a given state.
         public string Assemble(DialogueStateType stateType, string userInput = null)
         {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
             var sb = new StringBuilder();
 
             // 1. Base system prompt.
@@ -73,7 +74,10 @@ namespace ACLS.Authoring
             if (!string.IsNullOrWhiteSpace(userInput))
                 sb.Append("\n\n").Append(userInput);
 
-            return sb.ToString();
+            sw.Stop();
+            var result = sb.ToString();
+            ACLS.Logging.Log.Info(ACLS.Logging.Log.Channels.Llm, "[Timing] PromptAssembler.Assemble({0}): {1:F2}s, 长度={2}", stateType, sw.Elapsed.TotalSeconds, result.Length);
+            return result;
         }
 
         public string AssembleWorldBuild(string roleDescription, string worldDescription)
@@ -159,24 +163,24 @@ namespace ACLS.Authoring
             DialogueStateType.StagePlay =>
                 "每次回复严格使用 JSON：\n" +
                 "{\n" +
-                "  \"date\": \"<当前叙事日期，格式如 0184年01月08日>\",\n" +
-                "  \"thinking\": \"<你的推理过程，原样输出，尽量先输出该字段>\",\n" +
-                "  \"narration\": \"<2-4 段中文叙事>\",\n" +
-                "  \"scene_participants\": [ {\"name\": \"...\", \"role\": \"...\"} ],\n" +
-                "  \"choices\": [\n" +
+                "  \"th\": \"<你的推理过程，原样输出，尽量先输出该字段>\",\n" +
+                "  \"dt\": \"<当前叙事日期，格式如 0184年01月08日>\",\n" +
+                "  \"nar\": \"<2-4 段中文叙事>\",\n" +
+                "  \"sp\": [ {\"n\": \"...\", \"r\": \"...\"} ],\n" +
+                "  \"ch\": [\n" +
                 "    {\n" +
-                "      \"label\": \"<10 字以内>\",\n" +
-                "      \"outcome_narration\": \"<2-3 段>\",\n" +
-                "      \"days_passed\": <1..90>,\n" +
-                "      \"effects\": [ {\"kind\": \"...\", ...} ]\n" +
+                "      \"lb\": \"<10 字以内>\",\n" +
+                "      \"on\": \"<2-3 段>\",\n" +
+                "      \"dp\": <1..90>,\n" +
+                "      \"ef\": [ {\"kd\": \"...\", ...} ]\n" +
                 "    }\n" +
                 "  ],\n" +
-                "  \"_system\": {\n" +
-                "    \"suggested_state\": \"Dialogue\",\n" +
-                "    \"skill_triggers\": [\"npc-psychology\", \"relationship-tracker\"]\n" +
+                "  \"_s\": {\n" +
+                "    \"ss\": \"Dialogue\",\n" +
+                "    \"sk\": [\"npc-psychology\", \"relationship-tracker\"]\n" +
                 "  }\n" +
                 "}\n" +
-                "_system 为可选。不要 JSON 之外的文字（含 ``` 围栏）。",
+                "_s 为可选。不要 JSON 之外的文字（含 ``` 围栏）。",
 
             _ => "",
         };

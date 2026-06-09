@@ -2,9 +2,9 @@ using System.Collections.Generic;
 
 namespace ACLS.Authoring
 {
-    // World setting presets shown on the world-selection modal.
-    // Parallel to CharacterPresets: the player picks the world first,
-    // then creates their actor within it.
+    /// <summary>
+    /// 世界设定预设。数据源为 PresetDatabaseSO（Assets/Content/Config/PresetDatabase.asset）。
+    /// </summary>
     public static class WorldPresets
     {
         public sealed class Preset
@@ -12,48 +12,54 @@ namespace ACLS.Authoring
             public string Id;
             public string Title;
             public string Era;
-            public string Description;  // short subtitle shown on the card
-            public string Blurb;        // fed verbatim to LLM for world build
-            public bool IsCustom;       // if true, player types their own blurb
+            public string Description;
+            public string Blurb;
+            public bool IsCustom;
         }
 
-        public static readonly IReadOnlyList<Preset> All = new[]
+        private static PresetDatabaseSO _db;
+        private static IReadOnlyList<Preset> _cached;
+
+        private static PresetDatabaseSO Database
         {
-            new Preset
+            get
             {
-                Id          = "wld_sanguo_184",
-                Title       = "三国乱世",
-                Era         = "东汉·中平元年（184）",
-                Description = "黄巾初起，英雄辈出",
-                Blurb       = "东汉末年，中平元年，黄巾之乱方兴未艾。朝政日衰，宦官擅权，天下英雄蠢蠢欲动。" +
-                              "烽烟从冀州蔓延至四方，乱世的序幕已然拉开。",
-            },
-            new Preset
+                if (_db == null)
+                    _db = ContentLoader.LoadSync<PresetDatabaseSO>(
+                        "Assets/Content/Config/PresetDatabase.asset",
+                        "Config/PresetDatabase");
+                return _db;
+            }
+        }
+
+        public static IReadOnlyList<Preset> All
+        {
+            get
             {
-                Id          = "wld_tang_kaiyuan",
-                Title       = "大唐开元",
-                Era         = "唐·开元年间（713-741）",
-                Description = "盛唐极盛，长安繁华",
-                Blurb       = "盛唐极盛，开元年间长安繁华如梦。诗酒流行，商旅往来，四夷宾服。" +
-                              "然安史之乱的阴云，尚在遥远的地平线之外。",
-            },
-            new Preset
-            {
-                Id          = "wld_song_bianjing",
-                Title       = "北宋汴京",
-                Era         = "宋·北宋中期",
-                Description = "市井繁华，文人风流",
-                Blurb       = "北宋汴京车水马龙，市井繁华，科举盛行，士大夫风流一时。" +
-                              "然西夏与辽在北方虎视眈眈，边患未曾平息。",
-            },
-            new Preset
-            {
-                Id          = "wld_custom",
-                Title       = "自定义世界",
-                Era         = "自定义",
-                Description = "用文字描述你想生活的世界",
-                IsCustom    = true,
-            },
-        };
+                if (_cached != null) return _cached;
+                var db = Database;
+                if (db == null || db.Presets == null || db.Presets.Count == 0)
+                {
+                    _cached = System.Array.Empty<Preset>();
+                    return _cached;
+                }
+                var list = new List<Preset>();
+                foreach (var e in db.Presets)
+                {
+                    if ((e.Lists & PresetList.World) == 0) continue;
+                    list.Add(new Preset
+                    {
+                        Id          = e.Id,
+                        Title       = e.Title,
+                        Era         = e.Era,
+                        Description = e.Description,
+                        Blurb       = e.WorldBlurb,
+                        IsCustom    = e.IsCustom,
+                    });
+                }
+                _cached = list;
+                return _cached;
+            }
+        }
     }
 }

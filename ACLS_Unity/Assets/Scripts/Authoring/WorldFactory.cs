@@ -16,12 +16,15 @@ namespace ACLS.Authoring
         public const int TRAIT_DECISIVE = 2;     // 果决
         public const int TRAIT_STUDIOUS = 3;     // 好学
 
-        // Eight cities the player can pick as 出身地. Names match what the LLM
-        // can recognise in 184 CE; 颍川 is technically a 郡 but commonly named
-        // in narrative as the local seat. All start owned by 后汉朝廷.
+        // Starting cities the player can pick as 出身地. For historical presets
+        // these match what the LLM can recognise in 184 CE; 颍川 is technically a
+        // 郡 but commonly named in narrative as the local seat. For sci-fi presets
+        // the additional entries serve as sim-layer anchors. All start owned by
+        // 后汉朝廷 (or the nearest equivalent for non-historical settings).
         public static readonly string[] StartingCities =
         {
-            "洛阳", "长安", "邺", "许", "颍川", "襄阳", "江陵", "成都"
+            "洛阳", "长安", "邺", "许", "颍川", "襄阳", "江陵", "成都",
+            "新希望站", "太虚城"
         };
 
         public static World BuildPlaceholderWorld()
@@ -115,6 +118,8 @@ namespace ACLS.Authoring
             "许" or "颍川" => "豫州",
             "襄阳" or "江陵" => "荆州",
             "成都" => "益州",
+            "新希望站" => "边缘星区",
+            "太虚城" => "中州",
             _ => "",
         };
 

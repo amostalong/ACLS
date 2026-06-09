@@ -48,6 +48,7 @@ namespace ACLS.Authoring
         public event Action<bool> OnBusyChanged;
         public event Action<string> OnError;                   // human-readable error
         public event Action<LlmUsage, LlmUsage> OnUsage;       // (last, cumulative)
+        public event Action<float> OnResponseTime;             // 响应耗时（秒）
         public event Action<string> OnThinkingChanged;
         public event Action<string> OnNarrationDelta;          // streaming narration delta
         public event Action<string> OnSystemDelta;             // system status delta (pipeline progress, etc.)
@@ -62,6 +63,9 @@ namespace ACLS.Authoring
         private LlmUsage cumulativeUsage;
         private int callCount;
         private string currentThinking = "";
+        private float lastResponseTime;  // 最近一次 LLM 响应耗时（秒），0 = 无数据
+        private WorldBuildStepReply pipelineWorldBuildReply;
+        private PlayerExpandReply pipelinePlayerExpandReply;
 
         public LlmDialogueOrchestrator(World world, ILlmClient llm,
             LlmPromptConfig promptConfig)
@@ -219,11 +223,8 @@ namespace ACLS.Authoring
 
                 SetThinking(result.Thinking ?? "");
                 state.ApplyEffects(result);
-                if (!string.IsNullOrWhiteSpace(result.Narration))
-                {
-                    History.Add(new ChatMessage(ChatRole.Assistant, result.Narration));
-                    OnNarration?.Invoke(result.Narration);
-                }
+                PublishNarration(result.Narration);
+                SimLayerSync.Sync(World);
                 SaveManager.Save(World, GameMemory.Instance);
                 EmitSystemStatus("世界观构建完成 ✓");
                 onComplete?.Invoke(true);
@@ -272,6 +273,7 @@ namespace ACLS.Authoring
             SetBusy(true);
             var pipelineCts = CancellationTokenSource.CreateLinkedTokenSource(lifetimeCts.Token);
             currentCts = pipelineCts;
+            var pipelineSw = System.Diagnostics.Stopwatch.StartNew();
 
             string worldBuildContext = "";
             string l4Context = "";
@@ -302,13 +304,10 @@ namespace ACLS.Authoring
                     }
 
                     SetThinking(wsReply.Thinking ?? "");
+                    pipelineWorldBuildReply = wsReply;
                     worldBuildContext = wsReply.ToContextText();
                     World.Stage.WorldBuild = worldBuildContext;
-                    if (!string.IsNullOrWhiteSpace(wsReply.Narration))
-                    {
-                        History.Add(new ChatMessage(ChatRole.Assistant, wsReply.Narration));
-                        OnNarration?.Invoke(wsReply.Narration);
-                    }
+                    PublishNarration(wsReply.Narration);
 
                     // Build player context string for subsequent steps (basic info only; expansion happens later in Step 5)
                     {
@@ -329,7 +328,7 @@ namespace ACLS.Authoring
                         playerContext = sb.ToString().Trim();
                     }
                     SaveManager.Save(World, GameMemory.Instance);
-                    Log.Info(Log.Channels.Llm, "[OK] Step 1/6 WorldBuild 完成");
+                    Log.Info(Log.Channels.Llm, "[OK] Step 1/6 WorldBuild 完成 (+{0:F1}s)", pipelineSw.Elapsed.TotalSeconds);
                     EmitSystemStatus("世界观设定完成 ✓");
                 }
 
@@ -362,13 +361,10 @@ namespace ACLS.Authoring
                     World.Stage.L4World = l4Text;
                     foreach (var f in l4Factions.Factions)
                         GameMemory.Instance.AddFaction(new FactionEntry { name = f.name, stance = f.stance, type = "macro" });
-                    if (!string.IsNullOrWhiteSpace(l4Narration))
-                    {
-                        History.Add(new ChatMessage(ChatRole.Assistant, l4Narration));
-                        OnNarration?.Invoke(l4Narration);
-                    }
+                    PublishNarration(l4Narration);
+                    SimLayerSync.Sync(World);
                     SaveManager.Save(World, GameMemory.Instance);
-                    Log.Info(Log.Channels.Llm, "[OK] Step 2/6 L4Build 完成，{0} 个势力", l4Factions.Factions.Count);
+                    Log.Info(Log.Channels.Llm, "[OK] Step 2/6 L4Build 完成，{0} 个势力 (+{1:F1}s)", l4Factions.Factions.Count, pipelineSw.Elapsed.TotalSeconds);
                     EmitSystemStatus("宏观势力格局构建完成 ✓");
                 }
 
@@ -391,7 +387,10 @@ namespace ACLS.Authoring
                     var (l3Ok, l3Text, l3Factions, l3Narration) = ParseL3Reply(resp.Content);
                     if (!l3Ok)
                     {
-                        Log.Error(Log.Channels.Llm, "L3 步骤解析失败");
+                        Log.Error(Log.Channels.Llm, "L3 步骤解析失败 | resp.Content 长度={0} | 前400字:\n{1}\n后200字:\n{2}",
+                            (resp.Content ?? "").Length,
+                            (resp.Content ?? "").Length > 400 ? resp.Content.Substring(0, 400) : (resp.Content ?? ""),
+                            (resp.Content ?? "").Length > 200 ? resp.Content.Substring((resp.Content ?? "").Length - 200) : "");
                         OnError?.Invoke("区域势力构建失败。");
                         onComplete?.Invoke(false);
                         return;
@@ -402,13 +401,10 @@ namespace ACLS.Authoring
                     World.Stage.L3Expanse = l3Text;
                     foreach (var f in l3Factions.Factions)
                         GameMemory.Instance.AddFaction(new FactionEntry { name = f.name, stance = f.stance, type = "regional" });
-                    if (!string.IsNullOrWhiteSpace(l3Narration))
-                    {
-                        History.Add(new ChatMessage(ChatRole.Assistant, l3Narration));
-                        OnNarration?.Invoke(l3Narration);
-                    }
+                    PublishNarration(l3Narration);
+                    SimLayerSync.Sync(World);
                     SaveManager.Save(World, GameMemory.Instance);
-                    Log.Info(Log.Channels.Llm, "[OK] Step 3/6 L3Build 完成，{0} 个区域势力", l3Factions.Factions.Count);
+                    Log.Info(Log.Channels.Llm, "[OK] Step 3/6 L3Build 完成，{0} 个区域势力 (+{1:F1}s)", l3Factions.Factions.Count, pipelineSw.Elapsed.TotalSeconds);
                     EmitSystemStatus("区域势力网络构建完成 ✓");
                 }
 
@@ -462,14 +458,11 @@ namespace ACLS.Authoring
                         GameMemory.Instance.AddFaction(new FactionEntry { name = f.name, type = f.type, stance = f.stance });
                     foreach (var p in l2Entities.Places)
                         GameMemory.Instance.AddPlace(new PlaceEntry { name = p.name, type = p.type, description = p.description });
-                    if (!string.IsNullOrWhiteSpace(l2Narration))
-                    {
-                        History.Add(new ChatMessage(ChatRole.Assistant, l2Narration));
-                        OnNarration?.Invoke(l2Narration);
-                    }
+                    PublishNarration(l2Narration);
+                    SimLayerSync.Sync(World);
                     SaveManager.Save(World, GameMemory.Instance);
-                    Log.Info(Log.Channels.Llm, "[OK] Step 4/6 L2Build 完成: chars={0} factions={1} places={2}",
-                        l2Entities.Chars.Count, l2Entities.Factions.Count, l2Entities.Places.Count);
+                    Log.Info(Log.Channels.Llm, "[OK] Step 4/6 L2Build 完成: chars={0} factions={1} places={2} (+{3:F1}s)",
+                        l2Entities.Chars.Count, l2Entities.Factions.Count, l2Entities.Places.Count, pipelineSw.Elapsed.TotalSeconds);
                     EmitSystemStatus("近域人际网络构建完成 ✓");
                 }
 
@@ -498,6 +491,7 @@ namespace ACLS.Authoring
                     }
 
                     SetThinking(peReply.Thinking ?? "");
+                    pipelinePlayerExpandReply = peReply;
 
                     // Apply player expansion data
                     var player = World.Player;
@@ -546,13 +540,9 @@ namespace ACLS.Authoring
                         playerContext = sb.ToString().Trim();
                     }
 
-                    if (!string.IsNullOrWhiteSpace(peReply.Narration))
-                    {
-                        History.Add(new ChatMessage(ChatRole.Assistant, peReply.Narration));
-                        OnNarration?.Invoke(peReply.Narration);
-                    }
+                    PublishNarration(peReply.Narration);
                     SaveManager.Save(World, GameMemory.Instance);
-                    Log.Info(Log.Channels.Llm, "[OK] Step 5/6 PlayerExpansion + Storyline 完成: storylines={0}", peReply.Storylines.Count);
+                    Log.Info(Log.Channels.Llm, "[OK] Step 5/6 PlayerExpansion + Storyline 完成: storylines={0} (+{1:F1}s)", peReply.Storylines.Count, pipelineSw.Elapsed.TotalSeconds);
                     EmitSystemStatus("角色设定与故事线扩展完成 ✓");
                 }
 
@@ -561,20 +551,15 @@ namespace ACLS.Authoring
                 EmitSystemStatus("正在构建初始场景 (6/6)…");
                 {
                     string fragment = LoadFragment("Fragment_L1Build");
-                    string prompt = fragment
-                        .Replace("{world_build_context}", worldBuildContext ?? "")
-                        .Replace("{l4_context}", l4Context ?? "")
-                        .Replace("{l3_context}", l3Context ?? "")
-                        .Replace("{l2_arena}", World.Stage.L2Arena ?? "")
-                        .Replace("{l2_expansion}", World.Stage.L2Expansion ?? "")
-                        .Replace("{player_context}", playerContext ?? "");
+                    string entitySummary = BuildStep6EntitySummary(pipelineWorldBuildReply, pipelinePlayerExpandReply, playerContext);
+                    string prompt = fragment.Replace("{entity_summary}", entitySummary);
 
                     var resp = await CompleteStreamWithThinking(prompt,
                         new List<ChatMessage> { new ChatMessage(ChatRole.User, "开始构建初始场景") }, pipelineCts.Token);
                     TrackUsage(resp.Usage);
 
-                    Log.Info(Log.Channels.Llm, "[L1] 原始响应前200字: {0}", Truncate(SanitizeJson(resp.Content), 200));
-                    Log.Info(Log.Channels.Llm, "[L1] 原始响应长度: {0}", resp.Content?.Length ?? 0);
+                    Log.Debug(Log.Channels.Llm, "[L1] 原始响应前200字: {0}", Truncate(SanitizeJson(resp.Content), 200));
+                    Log.Debug(Log.Channels.Llm, "[L1] 原始响应长度: {0}", resp.Content?.Length ?? 0);
                     var (l1Ok, l1Text, l1Narration) = ParseL1Reply(resp.Content);
                     if (!l1Ok)
                     {
@@ -586,18 +571,14 @@ namespace ACLS.Authoring
 
                     SetThinking("");
                     World.Stage.L1Stage = l1Text;
-                    if (!string.IsNullOrWhiteSpace(l1Narration))
-                    {
-                        History.Add(new ChatMessage(ChatRole.Assistant, l1Narration));
-                        OnNarration?.Invoke(l1Narration);
-                    }
+                    PublishNarration(l1Narration);
                     SaveManager.Save(World, GameMemory.Instance);
-                    Log.Info(Log.Channels.Llm, "[OK] Step 6/6 L1Build 完成");
+                    Log.Info(Log.Channels.Llm, "[OK] Step 6/6 L1Build 完成 (+{0:F1}s)", pipelineSw.Elapsed.TotalSeconds);
                     EmitSystemStatus("初始场景构建完成 ✓");
                 }
 
                 // ══════ 全部完成 ══════
-                Log.Info(Log.Channels.Llm, "[OK] 世界流水线全部完成");
+                Log.Info(Log.Channels.Llm, "[OK] 世界流水线全部完成 (+{0:F1}s total)", pipelineSw.Elapsed.TotalSeconds);
                 EmitSystemStatus("世界构建全部完成，准备开始游戏 🎮");
                 onComplete?.Invoke(true);
             }
@@ -660,11 +641,8 @@ namespace ACLS.Authoring
 
                 SetThinking(result.Thinking ?? "");
                 state.ApplyEffects(result);
-                if (!string.IsNullOrWhiteSpace(result.Narration))
-                {
-                    History.Add(new ChatMessage(ChatRole.Assistant, result.Narration));
-                    OnNarration?.Invoke(result.Narration);
-                }
+                PublishNarration(result.Narration);
+                SimLayerSync.Sync(World);
                 SaveManager.Save(World, GameMemory.Instance);
                 EmitSystemStatus("舞台与初始场景生成完成 ✓");
                 onComplete?.Invoke(true);
@@ -708,11 +686,15 @@ namespace ACLS.Authoring
             if (addToHistory && !string.IsNullOrWhiteSpace(displayText))
                 History.Add(new ChatMessage(ChatRole.User, displayText));
 
+            var swAssemble = System.Diagnostics.Stopwatch.StartNew();
             string prompt = CurrentState.AssemblePrompt(userInput);
+            swAssemble.Stop();
+            Log.Info(Log.Channels.Llm, "[Timing] Prompt组装: {0:F2}s, prompt长度={1}", swAssemble.Elapsed.TotalSeconds, prompt?.Length ?? 0);
 
             SetBusy(true);
             var thisCts = CancellationTokenSource.CreateLinkedTokenSource(lifetimeCts.Token);
             currentCts = thisCts;
+            var swTotal = System.Diagnostics.Stopwatch.StartNew();
 
             const int MaxRetries = 2;
             var extraMessages = new List<ChatMessage>();
@@ -733,12 +715,22 @@ namespace ACLS.Authoring
                     if (extraMessages.Count > 0)
                         messages = messages.Concat(extraMessages).ToList();
 
+                    var swStream = System.Diagnostics.Stopwatch.StartNew();
                     var resp = await CompleteStreamWithTools(prompt, messages, thisCts.Token);
+                    swStream.Stop();
+                    Log.Info(Log.Channels.Llm, "[Timing] 流式调用 (attempt={0}): {1:F2}s", attempt, swStream.Elapsed.TotalSeconds);
+
+                    var swParse = System.Diagnostics.Stopwatch.StartNew();
                     var result = CurrentState.ParseResponse(resp.Content);
+                    swParse.Stop();
+                    Log.Info(Log.Channels.Llm, "[Timing] 响应解析: {0:F2}s, content长度={1}", swParse.Elapsed.TotalSeconds, resp.Content?.Length ?? 0);
 
                     if (!result.IsError)
                     {
+                        var swHandle = System.Diagnostics.Stopwatch.StartNew();
                         HandleResult(CurrentState, result);
+                        swHandle.Stop();
+                        Log.Info(Log.Channels.Llm, "[Timing] HandleResult: {0:F2}s, 总耗时: {1:F2}s", swHandle.Elapsed.TotalSeconds, swTotal.Elapsed.TotalSeconds);
                         return;
                     }
 
@@ -790,6 +782,14 @@ namespace ACLS.Authoring
                 UniTask.Post(() => OnSystemDelta?.Invoke(message));
         }
 
+        /// <summary>发布 narration。</summary>
+        private void PublishNarration(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return;
+            History.Add(new ChatMessage(ChatRole.Assistant, text));
+            OnNarration?.Invoke(text);
+        }
+
         private static IReadOnlyList<ChatMessage> EnsureMessages(IReadOnlyList<ChatMessage> messages)
         {
             if (messages == null || messages.Count == 0)
@@ -802,6 +802,8 @@ namespace ACLS.Authoring
         {
             SetThinking("");
             OnStreamingBegin?.Invoke();
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            Log.Info(Log.Channels.Llm, "[Timing] Stream START t={0:F3}s", Time.realtimeSinceStartup);
 
             var raw = new StringBuilder();
             string last = "";
@@ -840,23 +842,26 @@ namespace ACLS.Authoring
                 }
             }, ct);
 
+            sw.Stop();
+            lastResponseTime = (float)sw.Elapsed.TotalSeconds;
+            OnResponseTime?.Invoke(lastResponseTime);
+
             // ── 流结束后，发出最后一次完整 narration delta（确保打字机看到完整文本） ──
             EmitFinalNarrationDelta(raw);
+            Log.Info(Log.Channels.Llm, "[Timing] Stream END t={0:F3}s elapsed={1:F2}s rawLen={2}",
+                Time.realtimeSinceStartup, sw.Elapsed.TotalSeconds, raw.Length);
 
             // 日志输出 LLM 流式响应汇总
-            Log.Info(Log.Channels.Llm, "[OK] 收到完整流式响应 | 总长度={0}", raw.Length);
+            Log.Info(Log.Channels.Llm, "[OK] 收到完整流式响应 | 长度={0} ↑{1}↓{2}", raw.Length, resp.Usage.InputTokens, resp.Usage.OutputTokens);
 
-            // 日志输出 thinking + 回复内容
+            // 日志输出 thinking + 回复内容（太长时只输出摘要，避免刷屏）
             if (TryExtractThinking(raw, out var finalThinking) && !string.IsNullOrWhiteSpace(finalThinking))
-                Log.Info(Log.Channels.Llm, "[Think] Thinking:\n{0}", finalThinking);
-            Log.Info(Log.Channels.Llm, "[Resp] Response:\n{0}", raw.ToString());
+                Log.Info(Log.Channels.Llm, "[Think] len={0} preview={1}", finalThinking.Length, Truncate(finalThinking, 200));
+            Log.Info(Log.Channels.Llm, "[Resp] len={0} preview={1}", raw.Length, Truncate(raw.ToString(), 200));
 
             // Record in debug panel (always on main thread).
             string reqJson = $"{{\"model\":\"...\",\"system\":{EscapeJson(prompt)},\"messages\":[{string.Join(",", messages.Select(m => $"{{\"role\":\"{m.Role}\",\"content\":{EscapeJson(m.Content)}}}"))}]}}";
             LlmDebugLog.Add(GetProviderLabel(), reqJson, resp.Content);
-
-            // 等待打字机输出完成（简单测试：固定 5 秒）
-            await Task.Delay(5000, ct);
 
             return resp;
         }
@@ -872,6 +877,8 @@ namespace ACLS.Authoring
             SetThinking("");
 
             OnStreamingBegin?.Invoke();
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            Log.Info(Log.Channels.Llm, "[Timing] ToolStream START t={0:F3}s promptLen={1}", Time.realtimeSinceStartup, prompt?.Length ?? 0);
             var tools = ToolRegistry.GetAllDefinitions();
             Log.Info(Log.Channels.Llm, "[Tool] 可用工具({0}个): {1}",
                 tools.Count, string.Join(", ", tools.Select(t => t.Name)));
@@ -896,16 +903,14 @@ namespace ACLS.Authoring
                 // 日志：本轮发送的消息列表（含已累积的工具调用/结果）
                 if (workingMessages.Count > 1)
                 {
-                    var msgLog = new System.Text.StringBuilder();
-                    msgLog.Append($"[Tool Msgs] 发送 {workingMessages.Count} 条消息 (loop#{loopCount}):\n");
+                    Log.Info(Log.Channels.Llm, "[Tool Msgs] 发送 {0} 条消息 (loop#{1})", workingMessages.Count, loopCount);
                     for (int mi = 0; mi < workingMessages.Count; mi++)
                     {
                         var m = workingMessages[mi];
                         string preview = m.Content;
                         if (preview != null && preview.Length > 120) preview = preview.Substring(0, 120) + "…";
-                        msgLog.Append($"  [{mi}] {m.Role}: {preview}\n");
+                        Log.Info(Log.Channels.Llm, "  [{0}] {1}: {2}", mi, m.Role, preview);
                     }
-                    Log.Info(Log.Channels.Llm, msgLog.ToString());
                 }
 
                 var resp = await LlmClient.CompleteStreamWithToolsAsync(
@@ -943,21 +948,24 @@ namespace ACLS.Authoring
                 if (!resp.HasToolCalls)
                 {
                     // 纯文本回复——完成
-                    Log.Info(Log.Channels.Llm, "[OK] 工具循环完成 (共{0}轮) | 内容长度={1}",
-                        loopCount, raw.Length);
+                    Log.Info(Log.Channels.Llm, "[OK] 工具循环完成 (共{0}轮) | 长度={1} ↑{2}↓{3}",
+                        loopCount, raw.Length, resp.Usage.InputTokens, resp.Usage.OutputTokens);
+
+                    sw.Stop();
+                    lastResponseTime = (float)sw.Elapsed.TotalSeconds;
+                    OnResponseTime?.Invoke(lastResponseTime);
+                    Log.Info(Log.Channels.Llm, "[Timing] ToolStream END t={0:F3}s elapsed={1:F2}s loops={2} rawLen={3}",
+                        Time.realtimeSinceStartup, sw.Elapsed.TotalSeconds, loopCount, raw.Length);
 
                     // ── 发出最后一次完整 narration delta（确保打字机看到完整文本） ──
                     EmitFinalNarrationDelta(raw);
 
                     resp.Content = raw.ToString();
 
-                    // 日志输出 thinking + 回复内容
+                    // 日志输出 thinking + 回复内容（太长时只输出摘要）
                     if (TryExtractThinking(raw, out var finalThinking) && !string.IsNullOrWhiteSpace(finalThinking))
-                        Log.Info(Log.Channels.Llm, "[Think] Thinking:\n{0}", finalThinking);
-                    Log.Info(Log.Channels.Llm, "[Resp] Response:\n{0}", raw.ToString());
-
-                    // 等待打字机输出完成（简单测试：固定 5 秒）
-                    await Task.Delay(5000, ct);
+                        Log.Info(Log.Channels.Llm, "[Think] len={0} preview={1}", finalThinking.Length, Truncate(finalThinking, 200));
+                    Log.Info(Log.Channels.Llm, "[Resp] len={0} preview={1}", raw.Length, Truncate(raw.ToString(), 200));
 
                     return resp;
                 }
@@ -1019,9 +1027,12 @@ namespace ACLS.Authoring
             if (raw.Length > 0)
             {
                 if (TryExtractThinking(raw, out var finalThinking) && !string.IsNullOrWhiteSpace(finalThinking))
-                    Log.Info(Log.Channels.Llm, "[Think] Thinking:\n{0}", finalThinking);
-                Log.Info(Log.Channels.Llm, "[Resp] Response:\n{0}", raw.ToString());
+                    Log.Info(Log.Channels.Llm, "[Think] len={0} preview={1}", finalThinking.Length, Truncate(finalThinking, 200));
+                Log.Info(Log.Channels.Llm, "[Resp] len={0} preview={1}", raw.Length, Truncate(raw.ToString(), 200));
             }
+            sw.Stop();
+            lastResponseTime = (float)sw.Elapsed.TotalSeconds;
+            OnResponseTime?.Invoke(lastResponseTime);
             return new LlmResponse { Content = raw.ToString() };
         }
 
@@ -1089,10 +1100,18 @@ namespace ACLS.Authoring
         }
 
         private static bool TryExtractThinking(StringBuilder raw, out string thinking)
-            => TryExtractJsonStringField(raw, "thinking", out thinking);
+        {
+            // 尝试新版字段名 th，回退到旧版 thinking
+            if (TryExtractJsonStringField(raw, "th", out thinking)) return true;
+            return TryExtractJsonStringField(raw, "thinking", out thinking);
+        }
 
         private static bool TryExtractNarration(StringBuilder raw, out string narration)
-            => TryExtractJsonStringField(raw, "narration", out narration);
+        {
+            // 尝试新版字段名 nar，回退到旧版 narration
+            if (TryExtractJsonStringField(raw, "nar", out narration)) return true;
+            return TryExtractJsonStringField(raw, "narration", out narration);
+        }
 
         /// <summary>
         /// 流结束后发出最后一次完整的 narration delta，确保打字机效果始终看到完整文本。
@@ -1141,11 +1160,7 @@ namespace ACLS.Authoring
                 result.SuggestedNextState ?? "(无)",
                 result.DaysPassed);
 
-            if (!string.IsNullOrWhiteSpace(result.Narration))
-            {
-                History.Add(new ChatMessage(ChatRole.Assistant, result.Narration));
-                OnNarration?.Invoke(result.Narration);
-            }
+            PublishNarration(result.Narration);
 
             OnParticipants?.Invoke(result.Participants);
             OnChoices?.Invoke(result.Choices);
@@ -1187,6 +1202,111 @@ namespace ACLS.Authoring
             return asset != null ? asset.text.Trim() : "";
         }
 
+        /// <summary>为 Step 6 L1 构建紧凑实体摘要（~500-800 token），替代全量前序上下文。</summary>
+        private static string BuildStep6EntitySummary(
+            WorldBuildStepReply worldBuild, PlayerExpandReply playerExpand, string playerInfo)
+        {
+            var sb = new StringBuilder();
+
+            // ── 世界观概要（2-3 行） ──
+            if (worldBuild != null)
+            {
+                sb.AppendLine("【世界观概要】");
+                if (!string.IsNullOrWhiteSpace(worldBuild.EraName))
+                    sb.AppendLine($"时代：{worldBuild.EraName}");
+                if (!string.IsNullOrWhiteSpace(worldBuild.NarrativeStyle))
+                    sb.AppendLine($"叙事风格：{worldBuild.NarrativeStyle}");
+                if (!string.IsNullOrWhiteSpace(worldBuild.WorldUndertones))
+                    sb.AppendLine($"世界底色：{worldBuild.WorldUndertones}");
+                if (!string.IsNullOrWhiteSpace(worldBuild.WorldSummary))
+                    sb.AppendLine($"摘要：{worldBuild.WorldSummary}");
+                sb.AppendLine();
+            }
+
+            // ── 势力（来自 GameMemory） ──
+            var gm = GameMemory.Instance;
+            if (gm.Factions.Count > 0)
+            {
+                sb.AppendLine("【已知势力】");
+                foreach (var f in gm.Factions)
+                {
+                    sb.Append($"· {f.name}");
+                    if (!string.IsNullOrWhiteSpace(f.type)) sb.Append($" [{f.type}]");
+                    sb.AppendLine($": {f.stance}");
+                }
+                sb.AppendLine();
+            }
+
+            // ── 人物（L2 chars + 丰富化数据） ──
+            if (gm.Chars.Count > 0)
+            {
+                sb.AppendLine("【主要人物】");
+                foreach (var c in gm.Chars)
+                {
+                    sb.AppendLine($"· {c.name}，{c.role}，关系{c.relation:+0;-0}，{c.location}（约{c.reachable_in_days}天可达）");
+                    if (!string.IsNullOrWhiteSpace(c.background_story))
+                        sb.AppendLine($"  背景：{c.background_story}");
+                    if (!string.IsNullOrWhiteSpace(c.values))
+                        sb.AppendLine($"  价值观：{c.values}");
+                    if (!string.IsNullOrWhiteSpace(c.current_goal))
+                        sb.AppendLine($"  当前目标：{c.current_goal}");
+                    if (!string.IsNullOrWhiteSpace(c.secret))
+                        sb.AppendLine($"  秘密：{c.secret}");
+                    if (!string.IsNullOrWhiteSpace(c.father) || !string.IsNullOrWhiteSpace(c.mother))
+                        sb.AppendLine($"  父母：{c.father} {c.mother}");
+                    if (c.siblings.Length > 0)
+                        sb.AppendLine($"  兄弟姐妹：{string.Join("、", c.siblings)}");
+                    if (c.core_friends.Length > 0)
+                        sb.AppendLine($"  核心朋友：{string.Join("、", c.core_friends)}");
+                }
+                sb.AppendLine();
+            }
+
+            // ── 地点 ──
+            if (gm.Places.Count > 0)
+            {
+                sb.AppendLine("【已知地点】");
+                foreach (var p in gm.Places)
+                {
+                    sb.Append($"· {p.name}");
+                    if (!string.IsNullOrWhiteSpace(p.type)) sb.Append($" [{p.type}]");
+                    if (!string.IsNullOrWhiteSpace(p.description)) sb.Append($": {p.description}");
+                    sb.AppendLine();
+                }
+                sb.AppendLine();
+            }
+
+            // ── 故事线 ──
+            if (playerExpand != null && playerExpand.Storylines.Count > 0)
+            {
+                sb.AppendLine("【活跃故事线】");
+                foreach (var sl in playerExpand.Storylines)
+                {
+                    sb.AppendLine($"· {sl.Title}");
+                    if (!string.IsNullOrWhiteSpace(sl.Summary))
+                        sb.AppendLine($"  概述：{sl.Summary}");
+                    if (!string.IsNullOrWhiteSpace(sl.Hook))
+                        sb.AppendLine($"  切入点：{sl.Hook}");
+                    if (sl.InvolvedNpcs.Count > 0)
+                        sb.AppendLine($"  涉及人物：{string.Join("、", sl.InvolvedNpcs)}");
+                    if (sl.InvolvedLocations.Count > 0)
+                        sb.AppendLine($"  涉及地点：{string.Join("、", sl.InvolvedLocations)}");
+                    if (!string.IsNullOrWhiteSpace(sl.KeyTimePoint))
+                        sb.AppendLine($"  关键时间：{sl.KeyTimePoint}");
+                }
+                sb.AppendLine();
+            }
+
+            // ── 主角 ──
+            if (!string.IsNullOrWhiteSpace(playerInfo))
+            {
+                sb.AppendLine("【主角】");
+                sb.AppendLine(playerInfo);
+            }
+
+            return sb.ToString().Trim();
+        }
+
         /// <summary>解析 L4 构建的 LLM 回复。</summary>
         private static (bool ok, string text, Entities entities, string narration) ParseL4Reply(string raw)
         {
@@ -1199,17 +1319,17 @@ namespace ACLS.Authoring
             {
                 var obj = Newtonsoft.Json.Linq.JObject.Parse(text.Substring(open, close - open + 1));
                 var sb = new System.Text.StringBuilder();
-                string narration = ((string)obj["narration"] ?? "").Trim();
+                string narration = ((string)obj["nar"] ?? "").Trim();
 
                 var entities = ExtractEntities(obj);
 
                 // 将 macro_factions 合并到 entities.Factions
-                if (obj["macro_factions"] is Newtonsoft.Json.Linq.JArray macroFactions)
+                if (obj["mf"] is Newtonsoft.Json.Linq.JArray macroFactions)
                 {
                     foreach (var f in macroFactions)
                     {
-                        string n = ((string)f["name"] ?? "").Trim();
-                        string s = ((string)f["status"] ?? "").Trim();
+                        string n = ((string)f["n"] ?? "").Trim();
+                        string s = ((string)f["st"] ?? "").Trim();
                         if (!string.IsNullOrWhiteSpace(n))
                         {
                             sb.AppendLine($"· {n}：{s}");
@@ -1218,7 +1338,7 @@ namespace ACLS.Authoring
                     }
                 }
 
-                string summary = (string)obj["summary"] ?? "";
+                string summary = (string)obj["su"] ?? "";
                 if (!string.IsNullOrWhiteSpace(summary)) sb.AppendLine(summary);
 
                 return (sb.Length > 0, sb.ToString().Trim(), entities, narration);
@@ -1235,26 +1355,33 @@ namespace ACLS.Authoring
             string text = SanitizeJson(raw);
             int open = text.IndexOf('{');
             int close = text.LastIndexOf('}');
-            if (open < 0 || close <= open) return (false, "", null, "");
+            if (open < 0 || close <= open)
+            {
+                ACLS.Logging.Log.Error(ACLS.Logging.Log.Channels.Llm,
+                    "ParseL3Reply: missing braces open={0} close={1} rawLen={2} first120={3}",
+                    open, close, text.Length,
+                    text.Length > 120 ? text.Substring(0, 120) : text);
+                return (false, "", null, "");
+            }
 
             try
             {
                 var obj = Newtonsoft.Json.Linq.JObject.Parse(text.Substring(open, close - open + 1));
                 var sb = new System.Text.StringBuilder();
-                string narration = ((string)obj["narration"] ?? "").Trim();
+                string narration = ((string)obj["nar"] ?? "").Trim();
 
                 var entities = ExtractEntities(obj);
 
-                string region = (string)obj["region"] ?? "";
+                string region = (string)obj["reg"] ?? "";
                 if (!string.IsNullOrWhiteSpace(region)) sb.AppendLine(region);
 
                 // 将 regional_powers 合并到 entities.Factions
-                if (obj["regional_powers"] is Newtonsoft.Json.Linq.JArray powers)
+                if (obj["rp"] is Newtonsoft.Json.Linq.JArray powers)
                 {
                     foreach (var p in powers)
                     {
-                        string n = ((string)p["name"] ?? "").Trim();
-                        string st = ((string)p["stance"] ?? "").Trim();
+                        string n = ((string)p["n"] ?? "").Trim();
+                        string st = ((string)p["st"] ?? "").Trim();
                         if (!string.IsNullOrWhiteSpace(n))
                         {
                             sb.AppendLine($"· {n}：{st}");
@@ -1263,15 +1390,29 @@ namespace ACLS.Authoring
                     }
                 }
 
-                string tensions = (string)obj["regional_tensions"] ?? "";
+                string tensions = (string)obj["rt"] ?? "";
                 if (!string.IsNullOrWhiteSpace(tensions)) sb.AppendLine(tensions);
-                string summary = (string)obj["summary"] ?? "";
+                string summary = (string)obj["su"] ?? "";
                 if (!string.IsNullOrWhiteSpace(summary)) sb.AppendLine(summary);
+
+                if (sb.Length == 0)
+                {
+                    ACLS.Logging.Log.Error(ACLS.Logging.Log.Channels.Llm,
+                        "ParseL3Reply: sb empty after parse | reg='{0}' rpCount={1} rt='{2}' su='{3}' narLen={4}",
+                        region,
+                        (obj["rp"] as Newtonsoft.Json.Linq.JArray)?.Count ?? 0,
+                        tensions.Length, summary.Length, narration.Length);
+                }
 
                 return (sb.Length > 0, sb.ToString().Trim(), entities, narration);
             }
-            catch
+            catch (System.Exception ex)
             {
+                ACLS.Logging.Log.Error(ACLS.Logging.Log.Channels.Llm,
+                    "ParseL3Reply: JObject.Parse threw: {0}\n---raw(0..400)---\n{1}\n---raw(end 200)---\n{2}",
+                    ex.Message,
+                    text.Length > 400 ? text.Substring(0, 400) : text,
+                    text.Length > 200 ? text.Substring(text.Length - 200) : "");
                 return (false, "", null, "");
             }
         }
@@ -1297,50 +1438,50 @@ namespace ACLS.Authoring
             {
                 foreach (var c in chars)
                 {
-                    string n = ((string)c["name"] ?? "").Trim();
+                    string n = ((string)c["n"] ?? "").Trim();
                     if (string.IsNullOrWhiteSpace(n)) continue;
                     result.Chars.Add((
                         n,
-                        ((string)c["role"] ?? "").Trim(),
-                        ((string)c["location"] ?? "").Trim(),
-                        c["relation"]?.ToObject<int>() ?? 0,
-                        c["reachable_in_days"]?.ToObject<int>() ?? 0,
-                        ((string)c["father"] ?? "").Trim(),
-                        ((string)c["mother"] ?? "").Trim(),
-                        c["siblings"]?.ToObject<string[]>() ?? Array.Empty<string>(),
-                        c["other_relatives"]?.ToObject<string[]>() ?? Array.Empty<string>(),
-                        c["core_friends"]?.ToObject<string[]>() ?? Array.Empty<string>(),
-                        c["is_important"]?.ToObject<bool>() ?? false
+                        ((string)c["r"] ?? "").Trim(),
+                        ((string)c["loc"] ?? "").Trim(),
+                        c["rel"]?.ToObject<int>() ?? 0,
+                        c["rid"]?.ToObject<int>() ?? 0,
+                        ((string)c["fa"] ?? "").Trim(),
+                        ((string)c["mo"] ?? "").Trim(),
+                        c["sib"]?.ToObject<string[]>() ?? Array.Empty<string>(),
+                        c["orl"]?.ToObject<string[]>() ?? Array.Empty<string>(),
+                        c["cfr"]?.ToObject<string[]>() ?? Array.Empty<string>(),
+                        c["imp"]?.ToObject<bool>() ?? false
                     ));
                 }
             }
 
             // factions
-            if (obj["factions"] is Newtonsoft.Json.Linq.JArray factions)
+            if (obj["fac"] is Newtonsoft.Json.Linq.JArray factions)
             {
                 foreach (var f in factions)
                 {
-                    string n = ((string)f["name"] ?? "").Trim();
+                    string n = ((string)f["n"] ?? "").Trim();
                     if (string.IsNullOrWhiteSpace(n)) continue;
                     result.Factions.Add((
                         n,
-                        ((string)f["type"] ?? "").Trim(),
-                        ((string)f["stance"] ?? "").Trim()
+                        ((string)f["tp"] ?? "").Trim(),
+                        ((string)f["st"] ?? "").Trim()
                     ));
                 }
             }
 
             // places
-            if (obj["places"] is Newtonsoft.Json.Linq.JArray places)
+            if (obj["pl"] is Newtonsoft.Json.Linq.JArray places)
             {
                 foreach (var p in places)
                 {
-                    string n = ((string)p["name"] ?? "").Trim();
+                    string n = ((string)p["n"] ?? "").Trim();
                     if (string.IsNullOrWhiteSpace(n)) continue;
                     result.Places.Add((
                         n,
-                        ((string)p["type"] ?? "").Trim(),
-                        ((string)p["description"] ?? "").Trim()
+                        ((string)p["tp"] ?? "").Trim(),
+                        ((string)p["desc"] ?? "").Trim()
                     ));
                 }
             }
@@ -1386,7 +1527,7 @@ namespace ACLS.Authoring
                 var obj = Newtonsoft.Json.Linq.JObject.Parse(text.Substring(open, close - open + 1));
                 var sb = new System.Text.StringBuilder();
                 var result = new Entities();
-                string narration = ((string)obj["narration"] ?? "").Trim();
+                string narration = ((string)obj["nar"] ?? "").Trim();
 
                 // Chars
                 if (obj["chars"] is Newtonsoft.Json.Linq.JArray chars)
@@ -1394,18 +1535,18 @@ namespace ACLS.Authoring
                     sb.AppendLine("【人物】");
                     foreach (var c in chars)
                     {
-                        string n = ((string)c["name"] ?? "").Trim();
+                        string n = ((string)c["n"] ?? "").Trim();
                         if (string.IsNullOrWhiteSpace(n)) continue;
-                        string r = ((string)c["role"] ?? "").Trim();
-                        string l = ((string)c["location"] ?? "").Trim();
-                        int rel = c["relation"]?.ToObject<int>() ?? 0;
-                        int days = c["reachable_in_days"]?.ToObject<int>() ?? 0;
-                        string father = ((string)c["father"] ?? "").Trim();
-                        string mother = ((string)c["mother"] ?? "").Trim();
-                        var siblings = c["siblings"]?.ToObject<string[]>() ?? Array.Empty<string>();
-                        var otherRelatives = c["other_relatives"]?.ToObject<string[]>() ?? Array.Empty<string>();
-                        var coreFriends = c["core_friends"]?.ToObject<string[]>() ?? Array.Empty<string>();
-                        bool important = c["is_important"]?.ToObject<bool>() ?? false;
+                        string r = ((string)c["r"] ?? "").Trim();
+                        string l = ((string)c["loc"] ?? "").Trim();
+                        int rel = c["rel"]?.ToObject<int>() ?? 0;
+                        int days = c["rid"]?.ToObject<int>() ?? 0;
+                        string father = ((string)c["fa"] ?? "").Trim();
+                        string mother = ((string)c["mo"] ?? "").Trim();
+                        var siblings = c["sib"]?.ToObject<string[]>() ?? Array.Empty<string>();
+                        var otherRelatives = c["orl"]?.ToObject<string[]>() ?? Array.Empty<string>();
+                        var coreFriends = c["cfr"]?.ToObject<string[]>() ?? Array.Empty<string>();
+                        bool important = c["imp"]?.ToObject<bool>() ?? false;
                         sb.AppendLine($"· {n}（{r}，{l}，关系{rel:+#;-#;0}，约{days}天" +
                             $"{(important ? "【重要】" : "")}）");
                         result.Chars.Add((n, r, l, rel, days, father, mother, siblings, otherRelatives, coreFriends, important));
@@ -1413,30 +1554,30 @@ namespace ACLS.Authoring
                 }
 
                 // Factions
-                if (obj["factions"] is Newtonsoft.Json.Linq.JArray factions)
+                if (obj["fac"] is Newtonsoft.Json.Linq.JArray factions)
                 {
                     sb.AppendLine("【势力】");
                     foreach (var f in factions)
                     {
-                        string n = ((string)f["name"] ?? "").Trim();
+                        string n = ((string)f["n"] ?? "").Trim();
                         if (string.IsNullOrWhiteSpace(n)) continue;
-                        string t = ((string)f["type"] ?? "").Trim();
-                        string st = ((string)f["stance"] ?? "").Trim();
+                        string t = ((string)f["tp"] ?? "").Trim();
+                        string st = ((string)f["st"] ?? "").Trim();
                         sb.AppendLine($"▸ {n}（{t}）：{st}");
                         result.Factions.Add((n, t, st));
                     }
                 }
 
                 // Places
-                if (obj["places"] is Newtonsoft.Json.Linq.JArray places)
+                if (obj["pl"] is Newtonsoft.Json.Linq.JArray places)
                 {
                     sb.AppendLine("【地点】");
                     foreach (var p in places)
                     {
-                        string n = ((string)p["name"] ?? "").Trim();
+                        string n = ((string)p["n"] ?? "").Trim();
                         if (string.IsNullOrWhiteSpace(n)) continue;
-                        string t = ((string)p["type"] ?? "").Trim();
-                        string d = ((string)p["description"] ?? "").Trim();
+                        string t = ((string)p["tp"] ?? "").Trim();
+                        string d = ((string)p["desc"] ?? "").Trim();
                         sb.AppendLine($"· {n}（{t}）：{d}");
                         result.Places.Add((n, t, d));
                     }
@@ -1474,19 +1615,19 @@ namespace ACLS.Authoring
             }
 
             var sb = new System.Text.StringBuilder();
-            string narration = ((string)obj["narration"] ?? "").Trim();
+            string narration = ((string)obj["nar"] ?? "").Trim();
 
-            // 支持两种格式：顶层字段，或嵌套在 l1_stage 内部
-            var l1 = obj["l1_stage"] as Newtonsoft.Json.Linq.JObject;
+            // 支持两种格式：顶层字段，或嵌套在 l1_stage / l1s 内部（兼容旧字段名）
+            var l1 = (obj["l1s"] ?? obj["l1_stage"]) as Newtonsoft.Json.Linq.JObject;
             string location = l1 != null
-                ? ((string)l1["location"] ?? "").Trim()
-                : ((string)obj["location"] ?? "").Trim();
+                ? ((string)(l1["loc"] ?? l1["location"]) ?? "").Trim()
+                : ((string)(obj["loc"] ?? obj["location"]) ?? "").Trim();
             string scene = l1 != null
-                ? ((string)l1["scene_description"] ?? "").Trim()
-                : ((string)obj["scene_description"] ?? "").Trim();
+                ? ((string)(l1["sd"] ?? l1["scene_description"]) ?? "").Trim()
+                : ((string)(obj["sd"] ?? obj["scene_description"]) ?? "").Trim();
             string situation = l1 != null
-                ? ((string)l1["immediate_situation"] ?? "").Trim()
-                : ((string)obj["immediate_situation"] ?? "").Trim();
+                ? ((string)(l1["is"] ?? l1["immediate_situation"]) ?? "").Trim()
+                : ((string)(obj["is"] ?? obj["immediate_situation"]) ?? "").Trim();
 
             Log.Debug(Log.Channels.Llm, "[L1] 解析: location=[{0}] scene长度={1} situation长度={2}",
                 location, scene.Length, situation.Length);
@@ -1494,16 +1635,17 @@ namespace ACLS.Authoring
             if (!string.IsNullOrWhiteSpace(location)) sb.AppendLine($"[所在] {location}");
             if (!string.IsNullOrWhiteSpace(scene)) sb.AppendLine(scene);
 
-            var npcs = l1?["active_npcs"] as Newtonsoft.Json.Linq.JArray ?? obj["active_npcs"] as Newtonsoft.Json.Linq.JArray;
+            var npcs = (l1?["an"] ?? l1?["active_npcs"]) as Newtonsoft.Json.Linq.JArray
+                ?? (obj["an"] ?? obj["active_npcs"]) as Newtonsoft.Json.Linq.JArray;
             if (npcs != null)
             {
                 foreach (var n in npcs)
                 {
-                    string name = ((string)n["name"] ?? "").Trim();
+                    string name = ((string)(n["n"] ?? n["name"]) ?? "").Trim();
                     if (string.IsNullOrWhiteSpace(name)) continue;
-                    string role = ((string)n["role"] ?? "").Trim();
-                    string stance = ((string)n["stance"] ?? "").Trim();
-                    int rel = n["relation_value"]?.ToObject<int>() ?? 0;
+                    string role = ((string)(n["r"] ?? n["role"]) ?? "").Trim();
+                    string stance = ((string)(n["st"] ?? n["stance"]) ?? "").Trim();
+                    int rel = (n["rv"] ?? n["relation_value"])?.ToObject<int>() ?? 0;
                     sb.AppendLine($"· {name}（{role}，关系{rel:+#;-#;0}）：{stance}");
                 }
             }
@@ -1511,7 +1653,8 @@ namespace ACLS.Authoring
             if (!string.IsNullOrWhiteSpace(situation)) sb.AppendLine(situation);
 
             // exits：兼容字符串列表和 {destination, description} 对象列表
-            var exits = l1?["exits"] as Newtonsoft.Json.Linq.JArray ?? obj["exits"] as Newtonsoft.Json.Linq.JArray;
+            var exits = (l1?["ex"] ?? l1?["exits"]) as Newtonsoft.Json.Linq.JArray
+                ?? (obj["ex"] ?? obj["exits"]) as Newtonsoft.Json.Linq.JArray;
             if (exits != null)
             {
                 sb.Append("[出口] ");

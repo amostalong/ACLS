@@ -135,6 +135,10 @@ namespace ACLS.Llm
             req.Headers.Add("anthropic-version", ApiVersion);
             req.Content = new StringContent(requestJson, Encoding.UTF8, "application/json");
 
+            var swTotal = System.Diagnostics.Stopwatch.StartNew();
+            bool firstChunk = true;
+            int chunkCount = 0;
+
             using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
             if (!resp.IsSuccessStatusCode)
             {
@@ -149,6 +153,7 @@ namespace ACLS.Llm
 
             var textSb = new StringBuilder();
             var toolCalls = new List<LlmToolCall>();
+            var usage = new LlmUsage();
             string stopReason = "";
 
             // Track in-progress content blocks by index
@@ -163,6 +168,13 @@ namespace ACLS.Llm
 
                 string data = line.Substring(5).Trim();
                 if (string.IsNullOrWhiteSpace(data)) continue;
+
+                chunkCount++;
+                if (firstChunk)
+                {
+                    firstChunk = false;
+                    Log.Info(Log.Channels.Network, "[Anthropic] TTFT: {0:F2}s", swTotal.Elapsed.TotalSeconds);
+                }
 
                 try
                 {
@@ -235,7 +247,12 @@ namespace ACLS.Llm
                             var msgDelta = obj["delta"] as JObject;
                             if (msgDelta != null)
                                 stopReason = (string)msgDelta["stop_reason"] ?? "";
-                            // No usage tracking for now
+                            var usageObj = obj["usage"] as JObject;
+                            if (usageObj != null)
+                            {
+                                usage.InputTokens = (int?)usageObj["input_tokens"] ?? usage.InputTokens;
+                                usage.OutputTokens = (int?)usageObj["output_tokens"] ?? usage.OutputTokens;
+                            }
                             break;
                         }
                     }
@@ -266,12 +283,14 @@ namespace ACLS.Llm
             var result = new LlmResponse
             {
                 Content = textSb.ToString(),
+                Usage = usage,
                 ToolCalls = toolCalls.Count > 0 ? toolCalls : null,
                 StopReason = stopReason,
             };
 
-            if (verbose) Log.Info(Log.Channels.Network, "[Anthropic] ← {0} chars tools={1} stop={2}",
-                result.Content.Length, toolCalls.Count, stopReason);
+            swTotal.Stop();
+            Log.Info(Log.Channels.Network, "[Anthropic] ← {0} chars tools={1} stop={2} | {3:F2}s total, {4} chunks",
+                result.Content.Length, toolCalls.Count, stopReason, swTotal.Elapsed.TotalSeconds, chunkCount);
 
             return result;
         }

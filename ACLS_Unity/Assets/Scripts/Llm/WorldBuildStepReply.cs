@@ -65,15 +65,15 @@ namespace ACLS.Llm
             }
 
             var result = new WorldBuildStepReply();
-            result.Thinking = ((string)obj["thinking"] ?? "").Trim();
-            result.Narration = ((string)obj["narration"] ?? "").Trim();
-            result.EraName = ((string)obj["era_name"] ?? "").Trim();
-            result.NarrativeStyle = ((string)obj["narrative_style"] ?? "").Trim();
-            result.NarrativePerspective = ((string)obj["narrative_perspective"] ?? "").Trim();
-            result.WorldUndertones = ((string)obj["world_undertones"] ?? "").Trim();
-            result.WorldSummary = ((string)obj["world_summary"] ?? "").Trim();
+            result.Thinking = ((string)(obj["th"] ?? obj["thinking"]) ?? "").Trim();
+            result.Narration = ((string)(obj["nar"] ?? obj["narration"]) ?? "").Trim();
+            result.EraName = ((string)(obj["era"] ?? obj["era_name"]) ?? "").Trim();
+            result.NarrativeStyle = ((string)(obj["nst"] ?? obj["narrative_style"]) ?? "").Trim();
+            result.NarrativePerspective = ((string)(obj["npe"] ?? obj["narrative_perspective"]) ?? "").Trim();
+            result.WorldUndertones = ((string)(obj["wu"] ?? obj["world_undertones"]) ?? "").Trim();
+            result.WorldSummary = ((string)(obj["ws"] ?? obj["world_summary"]) ?? "").Trim();
 
-            if (obj["cognitive_boundaries"] is JArray cb)
+            if ((obj["cb"] ?? obj["cognitive_boundaries"]) is JArray cb)
             {
                 foreach (var item in cb)
                 {
@@ -82,7 +82,7 @@ namespace ACLS.Llm
                 }
             }
 
-            if (obj["historical_anchors"] is JArray ha)
+            if ((obj["ha"] ?? obj["historical_anchors"]) is JArray ha)
             {
                 foreach (var item in ha)
                 {

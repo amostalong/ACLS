@@ -94,47 +94,47 @@ namespace ACLS.Llm
             }
 
             var result = new PlayerExpandReply();
-            result.Thinking = ((string)obj["thinking"] ?? "").Trim();
-            result.Narration = ((string)obj["narration"] ?? "").Trim();
+            result.Thinking = ((string)(obj["th"] ?? obj["thinking"]) ?? "").Trim();
+            result.Narration = ((string)(obj["nar"] ?? obj["narration"]) ?? "").Trim();
 
             // ---- player_expansion ----
-            var pe = obj["player_expansion"] as JObject;
+            var pe = (obj["pe"] ?? obj["player_expansion"]) as JObject;
             if (pe != null)
             {
-                result.BackgroundStory = ((string)pe["background_story"] ?? "").Trim();
-                result.Values = ((string)pe["values"] ?? "").Trim();
-                result.CurrentGoal = ((string)pe["current_goal"] ?? "").Trim();
-                result.Secret = ((string)pe["secret"] ?? "").Trim();
+                result.BackgroundStory = ((string)(pe["bg"] ?? pe["background_story"]) ?? "").Trim();
+                result.Values = ((string)(pe["val"] ?? pe["values"]) ?? "").Trim();
+                result.CurrentGoal = ((string)(pe["cg"] ?? pe["current_goal"]) ?? "").Trim();
+                result.Secret = ((string)(pe["sec"] ?? pe["secret"]) ?? "").Trim();
 
-                if (pe["connections"] is JArray conns)
+                if ((pe["conn"] ?? pe["connections"]) is JArray conns)
                     foreach (var item in conns) { string s = ((string)item ?? "").Trim(); if (!string.IsNullOrWhiteSpace(s)) result.Connections.Add(s); }
-                if (pe["known_facts"] is JArray facts)
+                if ((pe["kf"] ?? pe["known_facts"]) is JArray facts)
                     foreach (var item in facts) { string s = ((string)item ?? "").Trim(); if (!string.IsNullOrWhiteSpace(s)) result.KnownFacts.Add(s); }
-                if (pe["owned_items"] is JArray items)
+                if ((pe["oi"] ?? pe["owned_items"]) is JArray items)
                     foreach (var item in items) { string s = ((string)item ?? "").Trim(); if (!string.IsNullOrWhiteSpace(s)) result.OwnedItems.Add(s); }
             }
 
             // ---- storylines ----
-            if (obj["storylines"] is JArray slArr)
+            if ((obj["sl"] ?? obj["storylines"]) is JArray slArr)
             {
                 foreach (var sl in slArr)
                 {
-                    var title = ((string)sl["title"] ?? "").Trim();
+                    var title = ((string)(sl["ti"] ?? sl["title"]) ?? "").Trim();
                     if (string.IsNullOrWhiteSpace(title)) continue;
 
                     var storyline = new Storyline
                     {
                         Title = title,
-                        Summary = ((string)sl["summary"] ?? "").Trim(),
-                        Hook = ((string)sl["hook"] ?? "").Trim(),
-                        KeyTimePoint = ((string)sl["key_time_point"] ?? "").Trim(),
+                        Summary = ((string)(sl["su"] ?? sl["summary"]) ?? "").Trim(),
+                        Hook = ((string)(sl["hk"] ?? sl["hook"]) ?? "").Trim(),
+                        KeyTimePoint = ((string)(sl["ktp"] ?? sl["key_time_point"]) ?? "").Trim(),
                     };
 
-                    if (sl["involved_npcs"] is JArray npcArr)
+                    if ((sl["inp"] ?? sl["involved_npcs"]) is JArray npcArr)
                         foreach (var n in npcArr) { string s = ((string)n ?? "").Trim(); if (!string.IsNullOrWhiteSpace(s)) storyline.InvolvedNpcs.Add(s); }
-                    if (sl["involved_items"] is JArray itemArr)
+                    if ((sl["ini"] ?? sl["involved_items"]) is JArray itemArr)
                         foreach (var it in itemArr) { string s = ((string)it ?? "").Trim(); if (!string.IsNullOrWhiteSpace(s)) storyline.InvolvedItems.Add(s); }
-                    if (sl["involved_locations"] is JArray locArr)
+                    if ((sl["inl"] ?? sl["involved_locations"]) is JArray locArr)
                         foreach (var loc in locArr) { string s = ((string)loc ?? "").Trim(); if (!string.IsNullOrWhiteSpace(s)) storyline.InvolvedLocations.Add(s); }
 
                     result.Storylines.Add(storyline);
@@ -142,20 +142,20 @@ namespace ACLS.Llm
             }
 
             // ---- npc_expansions ----
-            if (obj["npc_expansions"] is JArray npcExArr)
+            if ((obj["ne"] ?? obj["npc_expansions"]) is JArray npcExArr)
             {
                 foreach (var npc in npcExArr)
                 {
-                    var name = ((string)npc["name"] ?? "").Trim();
+                    var name = ((string)(npc["n"] ?? npc["name"]) ?? "").Trim();
                     if (string.IsNullOrWhiteSpace(name)) continue;
 
                     var expansion = new NpcExpansion
                     {
                         Name = name,
-                        BackgroundStory = ((string)npc["background_story"] ?? "").Trim(),
-                        Values = ((string)npc["values"] ?? "").Trim(),
-                        CurrentGoal = ((string)npc["current_goal"] ?? "").Trim(),
-                        Secret = ((string)npc["secret"] ?? "").Trim(),
+                        BackgroundStory = ((string)(npc["bg"] ?? npc["background_story"]) ?? "").Trim(),
+                        Values = ((string)(npc["val"] ?? npc["values"]) ?? "").Trim(),
+                        CurrentGoal = ((string)(npc["cg"] ?? npc["current_goal"]) ?? "").Trim(),
+                        Secret = ((string)(npc["sec"] ?? npc["secret"]) ?? "").Trim(),
                     };
 
                     result.NpcExpansions.Add(expansion);

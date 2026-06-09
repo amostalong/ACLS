@@ -27,9 +27,14 @@ namespace ACLS.UI
         private List<Button> choiceButtons = new List<Button>();
         private TextMeshProUGUI streamingMsg;
         private int streamingGen;
+        private string streamingTimestamp;  // 当前流式消息的开始时间
+
+        // ── 等待动画状态 ──
+        private Coroutine loadingDotsCoroutine;
 
         // ── 打字机状态 ──
-        private const float TypewriterCharInterval = 0.035f;
+        // 基础间隔；通过 minInterval 防止短消息播得太慢
+        private const float TypewriterCharInterval = 0.025f;
         private Coroutine typewriterCoroutine;
         private string typewriterTarget;
         private IReadOnlyList<LlmReply.Choice> pendingChoices;
@@ -68,6 +73,7 @@ namespace ACLS.UI
 
         private void OnDestroy()
         {
+            if (loadingDotsCoroutine != null) { StopCoroutine(loadingDotsCoroutine); loadingDotsCoroutine = null; }
             if (bridge != null)
             {
                 bridge.OnMessage -= AppendMessage;
@@ -414,18 +420,32 @@ namespace ACLS.UI
             // ── 旁白消息结束：启动打字机动画 ──
             if (streamingMsg != null && m.Role == ChatRole.Assistant)
             {
-                string label = "<color=#f5d57a><b>旁白</b></color>";
-                var text = $"{label}\n{Escape(m.Content)}";
-                if (bridge != null)
+                // 独立 meta 行：token 用量，不走打字机、响应到达立即显示
+                if (bridge != null) AppendMetaItem(bridge.LastUsage, bridge.CumulativeUsage);
+
+                // 关键：streamingMsg.text 已经是流式阶段累积的最终文本（由 OnMessageDelta 逐次写入），
+                // 如果再用 m.Content 重新构造 typewriterTarget，可能在末尾与 streamingMsg 不一致，
+                // 导致打字机“停止在最后几个字”。这里以 streamingMsg.text 为准。
+                Log.Info(Log.Channels.UI, "[Typewriter] 流已结束、准备收尾: gen={0} msgLen={1} contentLen={2}",
+                    streamingGen, streamingMsg?.text.Length ?? 0, m.Content?.Length ?? 0);
+
+                // 某些回合会传过来 OnMessage（例如 pipeline 步骈的 narration）但根本没有流式填充，
+                // 此时 streamingMsg.text 还是 “思考中” 占位符 → 换成正式内容。
+                if (streamingMsg != null && !string.IsNullOrEmpty(m.Content)
+                    && (streamingMsg.text.Contains("思考中") || streamingMsg.text.Length < m.Content.Length / 2))
                 {
-                    var usage = bridge.LastUsage;
-                    if (usage.HasData)
-                    {
-                        text += $"\n<size=14><color=#555555><align=right>in {usage.InputTokens} · out {usage.OutputTokens} · ∑{bridge.CumulativeUsage.Total}</align></color></size>";
-                    }
+                    string ts = streamingTimestamp;
+                    string label = "<color=#f5d57a><b>旁白</b></color>";
+                    string full = $"{label} {ts}\n{Escape(m.Content)}";
+                    streamingMsg.text = full;
+                    typewriterTarget = full;
+                }
+                else
+                {
+                    typewriterTarget = streamingMsg != null ? streamingMsg.text : "";
                 }
 
-                typewriterTarget = text;
+                // 启动收尾（主要起 Reset 状态、刷新 pending choices、推进 streamingGen 的作用）
                 if (typewriterCoroutine != null) StopCoroutine(typewriterCoroutine);
                 typewriterCoroutine = StartCoroutine(TypewriterRoutine());
                 return;
@@ -438,25 +458,30 @@ namespace ACLS.UI
                 ChatRole.System => "<color=#ff8888><b>系统</b></color>",
                 _ => "",
             };
-            var lineText = $"{prefix}\n{Escape(m.Content)}";
-
-            // Append token usage for assistant messages (右下角小字)
-            if (m.Role == ChatRole.Assistant && bridge != null)
-            {
-                var usage = bridge.LastUsage;
-                if (usage.HasData)
-                {
-                    lineText += $"\n<size=14><color=#555555><align=right>in {usage.InputTokens} · out {usage.OutputTokens} · ∑{bridge.CumulativeUsage.Total}</align></color></size>";
-                }
-            }
+            var lineText = $"{prefix} {Timestamp()}\n{Escape(m.Content)}";
 
             CreateMessageItem(lineText);
+
+            // 独立 meta 行：assistant 消息附加 token 用量
+            if (m.Role == ChatRole.Assistant && bridge != null)
+                AppendMetaItem(bridge.LastUsage, bridge.CumulativeUsage);
+
             ScrollToBottom();
+        }
+
+        private void AppendMetaItem(LlmUsage last, LlmUsage cumulative)
+        {
+            if (!last.HasData) return;
+            string rt = bridge != null && bridge.LastResponseTime > 0f
+                ? $" · {bridge.LastResponseTime:F1}s"
+                : "";
+            string metaText = $"<size=14><color=#555555><align=right>in {last.InputTokens} · out {last.OutputTokens} · ∑{cumulative.Total}{rt}</align></color></size>";
+            CreateMessageItem(metaText);
         }
 
         private void AppendSystemNotice(string text)
         {
-            CreateMessageItem($"<color=#888888>· {Escape(text)}</color>");
+            CreateMessageItem($"<color=#ff8888><b>系统</b></color> {Timestamp()}\n<color=#888888>· {Escape(text)}</color>");
             ScrollToBottom();
         }
 
@@ -488,6 +513,11 @@ namespace ACLS.UI
 
         private void OnBusyChanged(bool busy)
         {
+            if (!busy)
+            {
+                // 停止等待动画（出错/中断时清理）
+                if (loadingDotsCoroutine != null) { StopCoroutine(loadingDotsCoroutine); loadingDotsCoroutine = null; }
+            }
             SetInteractable(!busy && bridge.Ready);
             sendBtn.gameObject.SetActive(!busy);
             cancelBtn.gameObject.SetActive(busy);
@@ -527,22 +557,65 @@ namespace ACLS.UI
             ScrollThinkingToBottom();
         }
 
+        private static string Timestamp() =>
+            $"<color=#cccccc><size=12>{System.DateTime.Now:HH:mm:ss}</size></color>";
+
         private void OnStreamingBegin()
         {
-            // 停止正在播放的打字机
+            // 停止上次的等待动画
+            if (loadingDotsCoroutine != null) { StopCoroutine(loadingDotsCoroutine); loadingDotsCoroutine = null; }
+
+            // 有正在播放的打字机→先写完当前消息，再开始新的
             if (typewriterCoroutine != null)
             {
                 StopCoroutine(typewriterCoroutine);
                 typewriterCoroutine = null;
+                isTypewriting = false;
+                Log.Info(Log.Channels.UI, "[Typewriter] 被新流中断，强制收尾: gen={0} targetLen={1}",
+                    streamingGen, typewriterTarget?.Length ?? 0);
+                if (!string.IsNullOrEmpty(typewriterTarget))
+                {
+                    FinishTypewriting(typewriterTarget);
+                }
+                else
+                {
+                    // 打字机未真正启动，直接清掉流式槽
+                    streamingMsg = null;
+                    streamingGen++;
+                }
             }
-            isTypewriting = false;
             pendingChoices = null;
-            streamingMsg = null;
+
+            streamingTimestamp = Timestamp();
             streamingGen++;
+            // 创建加载占位消息，流式文本到达后自动替换
+            streamingMsg = CreateMessageItem($"<color=#f5d57a><b>旁白</b></color> {streamingTimestamp}\n<color=#7c7c8a>思考中</color>");
+            loadingDotsCoroutine = StartCoroutine(LoadingDotsRoutine());
+        }
+
+        /// <summary>思考中·→··→··· 循环动画</summary>
+        private System.Collections.IEnumerator LoadingDotsRoutine()
+        {
+            int dotCount = 0;
+            while (true)
+            {
+                dotCount = (dotCount % 4) + 1;
+                string dots = new string('·', dotCount);
+                if (streamingMsg != null)
+                    streamingMsg.text = $"<color=#f5d57a><b>旁白</b></color> {streamingTimestamp}\n<color=#7c7c8a>思考中{dots}</color>";
+                yield return new WaitForSeconds(0.5f);
+            }
         }
 
         private void OnMessageDelta(string partialNarration)
         {
+            // 流式文本到达，停止等待动画
+            if (loadingDotsCoroutine != null)
+            {
+                StopCoroutine(loadingDotsCoroutine);
+                loadingDotsCoroutine = null;
+            }
+
             int capturedGen = streamingGen;
             if (capturedGen != streamingGen) return;
 
@@ -556,7 +629,7 @@ namespace ACLS.UI
             }
 
             string label = "<color=#f5d57a><b>旁白</b></color>";
-            string full = $"{label}\n{Escape(partialNarration)}";
+            string full = $"{label} {streamingTimestamp}\n{Escape(partialNarration)}";
 
             // 打字机动画中：只缓存目标文本，不覆盖当前显示
             if (isTypewriting)
@@ -571,39 +644,50 @@ namespace ACLS.UI
             ScrollToBottom();
         }
 
-        /// <summary>打字机协程：逐字显示剩余字符</summary>
+        /// <summary>打字机协程：逐字显示剩余字符。
+        /// 关键：循环内部始终从字段读取最新 typewriterTarget，保证中途到达的新 delta 也能补齐。</summary>
         private System.Collections.IEnumerator TypewriterRoutine()
         {
             isTypewriting = true;
 
-            string currentText = streamingMsg != null ? streamingMsg.text : "";
-            string targetText = typewriterTarget ?? "";
+            int startLen = streamingMsg != null ? streamingMsg.text.Length : 0;
+            int targetLen = (typewriterTarget ?? "").Length;
+            Log.Info(Log.Channels.UI, "[Typewriter] 启动: gen={0} startLen={1} targetLen={2}",
+                streamingGen, startLen, targetLen);
 
-            // 如果当前文本长度已达到目标，直接完成
-            if (currentText.Length >= targetText.Length)
+            // 协程期间 typewriterTarget 可能会被 OnMessageDelta 延长；
+            // 循环条件用当前最新字段，确保能"追"上最新目标。
+            while (true)
             {
-                FinishTypewriting(targetText);
-                yield break;
-            }
+                string latestTarget = typewriterTarget ?? "";
+                int latestLen = latestTarget.Length;
+                int currentLen = streamingMsg != null ? streamingMsg.text.Length : 0;
 
-            // 从当前长度开始逐字显示
-            for (int i = currentText.Length + 1; i <= targetText.Length; i++)
-            {
+                if (currentLen >= latestLen)
+                {
+                    // 已显示到最新目标→结束
+                    FinishTypewriting(latestTarget);
+                    yield break;
+                }
+
+                // 写下一个字符
+                int nextLen = currentLen + 1;
                 if (streamingMsg != null)
-                    streamingMsg.text = targetText.Substring(0, i);
+                    streamingMsg.text = latestTarget.Substring(0, nextLen);
+
                 yield return new WaitForSeconds(TypewriterCharInterval);
             }
-
-            FinishTypewriting(targetText);
         }
 
         /// <summary>打字机完成：设置完整文本，清空流式槽，刷新缓冲的 choices</summary>
         private void FinishTypewriting(string finalText)
         {
+            int finalLen = finalText?.Length ?? 0;
+            Log.Info(Log.Channels.UI, "[Typewriter] 完成: gen={0} finalLen={1} streamingMsgNull={2}",
+                streamingGen, finalLen, streamingMsg == null);
+
             if (streamingMsg != null)
                 streamingMsg.text = finalText;
-
-            Log.Info(Log.Channels.UI, "[Typewriter] 打字机完成 gen={0} len={1}", streamingGen, finalText?.Length ?? 0);
 
             isTypewriting = false;
             typewriterCoroutine = null;

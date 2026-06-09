@@ -16,7 +16,7 @@ namespace ACLS.UI
     public sealed class NewGameView : MonoBehaviour
     {
         private const float CardW = 780f;
-        private const float CardH = 880f;
+        private const float CardVPadding = 100f;  // Card 上下各留 100px
         private const float PresetItemH = 80f;
         private const float PresetSpacing = 8f;
 
@@ -36,6 +36,8 @@ namespace ACLS.UI
 
         // ---------- browse mode ----------
         private GameObject browseGroup;
+        private ScrollRect browseScroll;
+        private RectTransform browseContent;
         private readonly List<Button> presetBtns = new List<Button>();
         private int _selectedIdx;
 
@@ -47,18 +49,17 @@ namespace ACLS.UI
         private Button femaleBtn;
         private Sex _sex = Sex.Male;
 
-        // ---------- custom mode ----------
-        private GameObject customGroup;
-        private TMP_InputField charDescInput;
-        private TMP_InputField worldDescInput;
+        // ---------- external (custom view) ----------
+        private CharacterCustomView customView;
 
         // ----------------------------------------------------------------
 
-        public void Bind(World world, ChatBridge chat, GameStateMachine stateMachine)
+        public void Bind(World world, ChatBridge chat, GameStateMachine stateMachine, CharacterCustomView customView)
         {
             this.world = world;
             this.chat = chat;
             this.stateMachine = stateMachine;
+            this.customView = customView;
             BuildUi();
             SetVisible(false);
         }
@@ -68,7 +69,6 @@ namespace ACLS.UI
             if (dim  != null) dim.SetActive(v);
             if (card != null) card.SetActive(v);
             if (v && world != null) world.Paused = true;
-            if (v) SwitchMode(ViewMode.Browse);
         }
 
         // ================================================================
@@ -86,7 +86,7 @@ namespace ACLS.UI
             card.transform.SetParent(transform, false);
             var rt = (RectTransform)card.transform;
             rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(0.5f, 0.5f);
-            rt.sizeDelta = new Vector2(CardW, CardH);
+            rt.sizeDelta = new Vector2(CardW, ResizeCardHeight());
             card.GetComponent<Image>().color = new Color(0.13f, 0.13f, 0.17f, 0.97f);
 
             BuildTitle();
@@ -100,25 +100,11 @@ namespace ACLS.UI
             bgRt.offsetMin = Vector2.zero;
             bgRt.offsetMax = Vector2.zero;
 
-            BuildPresets();
-            BuildNameRow();
-            BuildStartButton(isCustom: false);
-
-            // --- custom group ---
-            customGroup = new GameObject("CustomGroup", typeof(RectTransform));
-            customGroup.transform.SetParent(card.transform, false);
-            var cgRt = (RectTransform)customGroup.transform;
-            cgRt.anchorMin = Vector2.zero;
-            cgRt.anchorMax = Vector2.one;
-            cgRt.offsetMin = Vector2.zero;
-            cgRt.offsetMax = Vector2.zero;
-            BuildCustomPage();
-            BuildStartButton(isCustom: true);
+            BuildBrowseScroll();
+            BuildStartButton();
 
             // --- error label (shared, parented to card) ---
             BuildErrorLabel();
-
-            SwitchMode(ViewMode.Browse);
         }
 
         private void BuildTitle()
@@ -133,7 +119,71 @@ namespace ACLS.UI
             t.text = "选择你的身份";
         }
 
-        // -------- browse: presets --------
+        // -------- browse: scroll view + presets + name row --------
+
+        private void BuildBrowseScroll()
+        {
+            // Scroll view fills browseGroup between title area (~58px top) and start button (~64px bottom)
+            var scrollGo = new GameObject("BrowseScroll",
+                typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(ScrollRect));
+            scrollGo.transform.SetParent(browseGroup.transform, false);
+            var scrollRt = (RectTransform)scrollGo.transform;
+            scrollRt.anchorMin = new Vector2(0, 0);
+            scrollRt.anchorMax = new Vector2(1, 1);
+            scrollRt.offsetMin = new Vector2(0, 16 + 48 + 28 + 4);  // above bottom button+error area
+            scrollRt.offsetMax = new Vector2(0, -58);                // below title
+            scrollGo.GetComponent<Image>().color = new Color(0, 0, 0, 0);  // transparent
+
+            var sr = browseScroll = scrollGo.GetComponent<ScrollRect>();
+            sr.horizontal = false;
+            sr.vertical = true;
+            sr.movementType = ScrollRect.MovementType.Clamped;
+            sr.scrollSensitivity = 30f;
+
+            // Viewport
+            var vpGo = new GameObject("Viewport",
+                typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Mask));
+            vpGo.transform.SetParent(scrollGo.transform, false);
+            var vpRt = (RectTransform)vpGo.transform;
+            vpRt.anchorMin = Vector2.zero;
+            vpRt.anchorMax = Vector2.one;
+            vpRt.offsetMin = Vector2.zero;
+            vpRt.offsetMax = Vector2.zero;
+            vpGo.GetComponent<Image>().color = new Color(1, 1, 1, 0.01f);
+            vpGo.GetComponent<Mask>().showMaskGraphic = false;
+
+            // Content: VerticalLayoutGroup + ContentSizeFitter 驱动高度
+            var contentGo = new GameObject("Content",
+                typeof(RectTransform),
+                typeof(VerticalLayoutGroup),
+                typeof(ContentSizeFitter));
+            contentGo.transform.SetParent(vpGo.transform, false);
+            var ctRt = browseContent = (RectTransform)contentGo.transform;
+            ctRt.anchorMin = new Vector2(0, 1);
+            ctRt.anchorMax = new Vector2(1, 1);
+            ctRt.pivot = new Vector2(0.5f, 1);
+            ctRt.anchoredPosition = Vector2.zero;
+            ctRt.sizeDelta = new Vector2(0, 0);
+
+            var vlg = contentGo.GetComponent<VerticalLayoutGroup>();
+            vlg.spacing = PresetSpacing;
+            vlg.padding = new RectOffset(0, 0, 0, 0);
+            vlg.childAlignment = TextAnchor.UpperLeft;
+            vlg.childControlWidth = true;
+            vlg.childControlHeight = true;
+            vlg.childForceExpandWidth = true;
+            vlg.childForceExpandHeight = false;
+
+            var csf = contentGo.GetComponent<ContentSizeFitter>();
+            csf.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+            csf.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            sr.viewport = vpRt;
+            sr.content = ctRt;
+
+            BuildPresets();
+            BuildNameRow();
+        }
 
         private void BuildPresets()
         {
@@ -143,23 +193,20 @@ namespace ACLS.UI
             {
                 var p = NewGamePresets.All[i];
                 int captured = i;
-                float y = 58f + i * (PresetItemH + PresetSpacing);
 
                 var go = new GameObject($"NgPreset_{p.Id}",
-                    typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button));
-                go.transform.SetParent(browseGroup.transform, false);
-                var rt = (RectTransform)go.transform;
-                rt.anchorMin = new Vector2(0, 1);
-                rt.anchorMax = new Vector2(1, 1);
-                rt.pivot = new Vector2(0.5f, 1);
-                rt.offsetMin = new Vector2(24, -(y + PresetItemH));
-                rt.offsetMax = new Vector2(-24, -y);
+                    typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button),
+                    typeof(LayoutElement));
+                go.transform.SetParent(browseContent, false);
+                var le = go.GetComponent<LayoutElement>();
+                le.minHeight = PresetItemH;
+                le.preferredHeight = PresetItemH;
+                le.flexibleHeight = 0f;
                 go.GetComponent<Image>().color = UnselectedColor;
                 go.GetComponent<Button>().onClick.AddListener(() => OnPresetClicked(captured));
 
                 if (p.IsCustom)
                 {
-                    // Custom card
                     var icon = UiKit.CreateText(go.transform, "Icon", 25, TextAlignmentOptions.TopLeft);
                     var iRt = (RectTransform)icon.transform;
                     iRt.anchorMin = new Vector2(0, 1); iRt.anchorMax = new Vector2(1, 1);
@@ -176,7 +223,6 @@ namespace ACLS.UI
                 }
                 else
                 {
-                    // Normal preset card
                     var title = UiKit.CreateText(go.transform, "Title", 21, TextAlignmentOptions.TopLeft);
                     var tRt = (RectTransform)title.transform;
                     tRt.anchorMin = new Vector2(0, 1); tRt.anchorMax = new Vector2(1, 1);
@@ -202,63 +248,62 @@ namespace ACLS.UI
 
         private void BuildNameRow()
         {
-            float y = 58f + NewGamePresets.All.Count * (PresetItemH + PresetSpacing) + 12f;
-
-            nameRow = new GameObject("NameRow", typeof(RectTransform));
-            nameRow.transform.SetParent(browseGroup.transform, false);
-            var rt = (RectTransform)nameRow.transform;
-            rt.anchorMin = new Vector2(0, 1);
-            rt.anchorMax = new Vector2(1, 1);
-            rt.pivot = new Vector2(0.5f, 1);
-            rt.offsetMin = new Vector2(24, -(y + 50f));
-            rt.offsetMax = new Vector2(-24, -y);
+            nameRow = new GameObject("NameRow",
+                typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
+            nameRow.transform.SetParent(browseContent, false);
+            var nrt = (RectTransform)nameRow.transform;
+            nrt.anchorMin = new Vector2(0, 1);
+            nrt.anchorMax = new Vector2(1, 1);
+            nrt.pivot = new Vector2(0.5f, 1);
+            nrt.sizeDelta = new Vector2(0, 50f);
+            nrt.anchoredPosition = Vector2.zero;
+            var nle = nameRow.GetComponent<LayoutElement>();
+            nle.minHeight = 50f;
+            nle.preferredHeight = 50f;
+            nle.flexibleHeight = 0f;
+            var hlg = nameRow.GetComponent<HorizontalLayoutGroup>();
+            hlg.spacing = 4f;
+            hlg.padding = new RectOffset(0, 0, 0, 0);
+            hlg.childAlignment = TextAnchor.MiddleLeft;
+            hlg.childControlWidth = false;
+            hlg.childControlHeight = true;
+            hlg.childForceExpandWidth = false;
+            hlg.childForceExpandHeight = true;
 
             // 姓名*
             var nameLab = UiKit.CreateText(nameRow.transform, "NameLab", 19, TextAlignmentOptions.Left);
-            var nlRt = (RectTransform)nameLab.transform;
-            nlRt.anchorMin = new Vector2(0, 0); nlRt.anchorMax = new Vector2(0, 1);
-            nlRt.pivot = new Vector2(0, 0.5f);
-            nlRt.sizeDelta = new Vector2(60, 0);
-            nlRt.anchoredPosition = Vector2.zero;
+            var nlLe = nameLab.gameObject.AddComponent<LayoutElement>();
+            nlLe.minWidth = nlLe.preferredWidth = 60f;
+            nlLe.flexibleWidth = 0f;
             nameLab.text = "姓名*:";
 
             nameInput = ChatPanelView.MakeTmpInput(nameRow.transform, "NameInput", "如 张明", 6);
-            var niRt = (RectTransform)nameInput.transform;
-            niRt.anchorMin = new Vector2(0, 0); niRt.anchorMax = new Vector2(0, 1);
-            niRt.pivot = new Vector2(0, 0.5f);
-            niRt.sizeDelta = new Vector2(180, 0);
-            niRt.anchoredPosition = new Vector2(64, 0);
+            var niLe = nameInput.gameObject.AddComponent<LayoutElement>();
+            niLe.minWidth = niLe.preferredWidth = 180f;
+            niLe.flexibleWidth = 0f;
 
             // 字
             var courtLab = UiKit.CreateText(nameRow.transform, "CourtLab", 19, TextAlignmentOptions.Left);
-            var clRt = (RectTransform)courtLab.transform;
-            clRt.anchorMin = new Vector2(0, 0); clRt.anchorMax = new Vector2(0, 1);
-            clRt.pivot = new Vector2(0, 0.5f);
-            clRt.sizeDelta = new Vector2(30, 0);
-            clRt.anchoredPosition = new Vector2(256, 0);
+            var clLe = courtLab.gameObject.AddComponent<LayoutElement>();
+            clLe.minWidth = clLe.preferredWidth = 30f;
+            clLe.flexibleWidth = 0f;
             courtLab.text = "字:";
 
             courtesyInput = ChatPanelView.MakeTmpInput(nameRow.transform, "CourtesyInput", "可空", 4);
-            var ciRt = (RectTransform)courtesyInput.transform;
-            ciRt.anchorMin = new Vector2(0, 0); ciRt.anchorMax = new Vector2(0, 1);
-            ciRt.pivot = new Vector2(0, 0.5f);
-            ciRt.sizeDelta = new Vector2(150, 0);
-            ciRt.anchoredPosition = new Vector2(290, 0);
+            var ciLe = courtesyInput.gameObject.AddComponent<LayoutElement>();
+            ciLe.minWidth = ciLe.preferredWidth = 150f;
+            ciLe.flexibleWidth = 0f;
 
             // 性别
             maleBtn = UiKit.CreateButton(nameRow.transform, "Male", "男", () => { _sex = Sex.Male; ApplySexHighlight(); });
-            var mRt = (RectTransform)maleBtn.transform;
-            mRt.anchorMin = new Vector2(0, 0); mRt.anchorMax = new Vector2(0, 1);
-            mRt.pivot = new Vector2(0, 0.5f);
-            mRt.sizeDelta = new Vector2(70, 0);
-            mRt.anchoredPosition = new Vector2(460, 0);
+            var mLe = maleBtn.gameObject.AddComponent<LayoutElement>();
+            mLe.minWidth = mLe.preferredWidth = 70f;
+            mLe.flexibleWidth = 0f;
 
             femaleBtn = UiKit.CreateButton(nameRow.transform, "Female", "女", () => { _sex = Sex.Female; ApplySexHighlight(); });
-            var fRt = (RectTransform)femaleBtn.transform;
-            fRt.anchorMin = new Vector2(0, 0); fRt.anchorMax = new Vector2(0, 1);
-            fRt.pivot = new Vector2(0, 0.5f);
-            fRt.sizeDelta = new Vector2(70, 0);
-            fRt.anchoredPosition = new Vector2(536, 0);
+            var fLe = femaleBtn.gameObject.AddComponent<LayoutElement>();
+            fLe.minWidth = fLe.preferredWidth = 70f;
+            fLe.flexibleWidth = 0f;
 
             ApplySexHighlight();
 
@@ -268,74 +313,11 @@ namespace ACLS.UI
             courtesyInput.text = pair.Courtesy;
         }
 
-        // -------- custom mode --------
+        // -------- start button --------
 
-        private void BuildCustomPage()
+        private void BuildStartButton()
         {
-            // Back button
-            var backBtn = UiKit.CreateButton(customGroup.transform, "BackBtn", "← 返回", () => SwitchMode(ViewMode.Browse));
-            var bRt = (RectTransform)backBtn.transform;
-            bRt.anchorMin = new Vector2(0, 1); bRt.anchorMax = new Vector2(0, 1);
-            bRt.pivot = new Vector2(0, 1);
-            bRt.sizeDelta = new Vector2(100, 36);
-            bRt.anchoredPosition = new Vector2(16, -12);
-
-            // Title
-            var title = UiKit.CreateText(customGroup.transform, "CustomTitle", 27, TextAlignmentOptions.Center);
-            var tRt = (RectTransform)title.transform;
-            tRt.anchorMin = new Vector2(0, 1); tRt.anchorMax = new Vector2(1, 1);
-            tRt.pivot = new Vector2(0.5f, 1);
-            tRt.sizeDelta = new Vector2(0, 40);
-            tRt.anchoredPosition = new Vector2(0, -54);
-            title.text = "自定义角色与世界";
-
-            // 角色描述
-            var charLab = UiKit.CreateText(customGroup.transform, "CharLab", 19, TextAlignmentOptions.Left);
-            var chRt = (RectTransform)charLab.transform;
-            chRt.anchorMin = new Vector2(0, 1); chRt.anchorMax = new Vector2(1, 1);
-            chRt.pivot = new Vector2(0.5f, 1);
-            chRt.offsetMin = new Vector2(28, -(110 + 200 + 10));
-            chRt.offsetMax = new Vector2(-28, -(110 + 200 + 10 - 24));
-            charLab.text = "角色描述：";
-
-            charDescInput = ChatPanelView.MakeTmpInput(customGroup.transform, "CharDesc",
-                "例：一个出身寒门的年轻士人，立志在乱世中一展抱负……", 500);
-            var cdRt = (RectTransform)charDescInput.transform;
-            cdRt.anchorMin = new Vector2(0, 1); cdRt.anchorMax = new Vector2(1, 1);
-            cdRt.pivot = new Vector2(0.5f, 1);
-            cdRt.offsetMin = new Vector2(28, -(110 + 10));
-            cdRt.offsetMax = new Vector2(-28, -110);
-            charDescInput.lineType = TMP_InputField.LineType.MultiLineNewline;
-            // Make viewport taller (default MakeTmpInput creates SingleLine viewport,
-            // but the RectTransform offsets are set above so it spans the full area).
-
-            // 世界描述
-            var worldLab = UiKit.CreateText(customGroup.transform, "WorldLab", 19, TextAlignmentOptions.Left);
-            var wlRt = (RectTransform)worldLab.transform;
-            wlRt.anchorMin = new Vector2(0, 1); wlRt.anchorMax = new Vector2(1, 1);
-            wlRt.pivot = new Vector2(0.5f, 1);
-            wlRt.offsetMin = new Vector2(28, -110);
-            wlRt.offsetMax = new Vector2(-28, -(110 - 24));
-            worldLab.text = "世界描述：";
-
-            worldDescInput = ChatPanelView.MakeTmpInput(customGroup.transform, "WorldDesc",
-                "例：一个架空武侠世界，宋代风格，江湖门派林立……", 500);
-            var wdRt = (RectTransform)worldDescInput.transform;
-            wdRt.anchorMin = new Vector2(0, 1); wdRt.anchorMax = new Vector2(1, 1);
-            wdRt.pivot = new Vector2(0.5f, 1);
-            wdRt.offsetMin = new Vector2(28, 0);
-            wdRt.offsetMax = new Vector2(-28, -0);
-            worldDescInput.lineType = TMP_InputField.LineType.MultiLineNewline;
-
-            customGroup.SetActive(false);
-        }
-
-        // -------- start buttons --------
-
-        private void BuildStartButton(bool isCustom)
-        {
-            Transform parent = isCustom ? customGroup.transform : browseGroup.transform;
-            var btn = UiKit.CreateButton(parent, "StartBtn", "开始游戏", () => OnStartClicked(isCustom));
+            var btn = UiKit.CreateButton(browseGroup.transform, "StartBtn", "开始游戏", OnStartClicked);
             var rt = (RectTransform)btn.transform;
             rt.anchorMin = new Vector2(0, 0);
             rt.anchorMax = new Vector2(1, 0);
@@ -370,17 +352,24 @@ namespace ACLS.UI
         //  Mode switching
         // ================================================================
 
-        private enum ViewMode { Browse, Custom }
-        private ViewMode currentMode = ViewMode.Browse;
 
-        private void SwitchMode(ViewMode mode)
+        // Card 高度 = parent 高度 - 上下各 100px
+        private float ResizeCardHeight()
         {
-            currentMode = mode;
-            bool browse = mode == ViewMode.Browse;
-            browseGroup.SetActive(browse);
-            customGroup.SetActive(!browse);
-            if (errorText != null) errorText.text = "";
-            _isLoading = false;
+            var prt = transform as RectTransform;
+            float parentH = prt != null ? prt.rect.height : 1080f;
+            return Mathf.Max(400f, parentH - CardVPadding * 2f);
+        }
+
+        private void Awake()
+        {
+            // 屏幕大小变化时跟着缩放
+            var prt = transform as RectTransform;
+            if (prt != null && card != null)
+            {
+                var cardRt = (RectTransform)card.transform;
+                cardRt.sizeDelta = new Vector2(CardW, ResizeCardHeight());
+            }
         }
 
         // ================================================================
@@ -392,7 +381,12 @@ namespace ACLS.UI
             var p = NewGamePresets.All[idx];
             if (p.IsCustom)
             {
-                SwitchMode(ViewMode.Custom);
+                // 打开独立的自定义角色 view
+                if (customView != null)
+                {
+                    SetVisible(false);
+                    customView.SetVisible(true);
+                }
                 return;
             }
 
@@ -419,36 +413,21 @@ namespace ACLS.UI
         //  Start game
         // ================================================================
 
-        private void OnStartClicked(bool fromCustom)
+        private void OnStartClicked()
         {
             if (_isLoading || world == null || chat == null) return;
             _isLoading = true;
 
-            if (fromCustom)
+            string name = (nameInput?.text ?? "").Trim();
+            if (name.Length == 0)
             {
-                string cd = (charDescInput?.text ?? "").Trim();
-                string wd = (worldDescInput?.text ?? "").Trim();
-                if (cd.Length == 0 || wd.Length == 0)
-                {
-                    ShowError("※ 角色描述和世界描述不能为空");
-                    _isLoading = false;
-                    return;
-                }
-                BeginGame(customCharDesc: cd, customWorldDesc: wd);
+                ShowError("※ 姓名不能为空");
+                if (nameInput != null) nameInput.ActivateInputField();
+                _isLoading = false;
+                return;
             }
-            else
-            {
-                string name = (nameInput?.text ?? "").Trim();
-                if (name.Length == 0)
-                {
-                    ShowError("※ 姓名不能为空");
-                    if (nameInput != null) nameInput.ActivateInputField();
-                    _isLoading = false;
-                    return;
-                }
-                string courtesy = (courtesyInput?.text ?? "").Trim();
-                BeginGame(name, courtesy, _sex);
-            }
+            string courtesy = (courtesyInput?.text ?? "").Trim();
+            BeginGame(name, courtesy, _sex);
         }
 
         // ---------- browse path: pre-made preset ----------
@@ -490,79 +469,6 @@ namespace ACLS.UI
                 var charPreset = NewGamePresets.ToCharacterPreset(ngPreset);
                 // 流水线已完成 L1 场景构建，直接开始开场叙事
                 chat.StartOpening(charPreset);
-            });
-        }
-
-        // ---------- custom path: two text fields ----------
-
-        private void BeginGame(string customCharDesc, string customWorldDesc)
-        {
-            SetVisible(false);
-
-            // For custom, we treat both descriptions as blurb inputs.
-            // The character preset uses defaults + the custom char description as its blurb.
-            world.Stage.WorldDescription = customWorldDesc;
-
-            chat.StartWorldBuild(customCharDesc, customWorldDesc, success =>
-            {
-                if (!success)
-                {
-                    Log.Warn(Log.Channels.UI, "WorldPipeline failed, continuing with defaults");
-                }
-
-                stateMachine?.TransitionTo(GameState.Dialogue);
-
-                if (success && world.Player != null)
-                {
-                    int traitId = world.Player.Traits != null && world.Player.Traits.Count > 0
-                        ? world.Player.Traits[0]
-                        : WorldFactory.TRAIT_STUDIOUS;
-                    string traitLabel = traitId switch
-                    {
-                        WorldFactory.TRAIT_CAUTIOUS => "谨慎",
-                        WorldFactory.TRAIT_DECISIVE => "果决",
-                        WorldFactory.TRAIT_STUDIOUS => "好学",
-                        _ => "好学",
-                    };
-                    string locName = world.GetLocation(world.Player.Identity?.LocationId ?? 0)?.Name ?? "颍川";
-                    string blurb = !string.IsNullOrWhiteSpace(world.Player.BackgroundStory)
-                        ? world.Player.BackgroundStory
-                        : customCharDesc;
-
-                    var tempPreset = new CharacterPresets.Preset
-                    {
-                        Id = "custom",
-                        Title = "自定义角色",
-                        LocationName = locName,
-                        TraitId = traitId,
-                        TraitLabel = traitLabel,
-                        Blurb = blurb,
-                    };
-
-                    chat.StartOpening(tempPreset);
-                    return;
-                }
-
-                WorldFactory.ConfigurePlayer(
-                    world,
-                    name: "无名",
-                    courtesy: "",
-                    sex: Sex.Male,
-                    age: 22,
-                    locationName: "颍川",
-                    traitId: WorldFactory.TRAIT_STUDIOUS);
-
-                var fallbackPreset = new CharacterPresets.Preset
-                {
-                    Id = "custom",
-                    Title = "自定义角色",
-                    LocationName = "颍川",
-                    TraitId = WorldFactory.TRAIT_STUDIOUS,
-                    TraitLabel = "好学",
-                    Blurb = customCharDesc,
-                };
-
-                chat.StartStageCreate(fallbackPreset, _ => chat.StartOpening(fallbackPreset));
             });
         }
     }

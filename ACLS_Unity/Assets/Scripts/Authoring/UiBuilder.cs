@@ -74,7 +74,18 @@ namespace ACLS.Authoring
             ngRt.offsetMin = Vector2.zero;
             ngRt.offsetMax = Vector2.zero;
             var ngView = ngGo.AddComponent<NewGameView>();
-            ngView.Bind(world, chat, stateMachine);
+
+            // ── CharacterCustomView ── 自定义角色/世界输入，独立于 NewGame 的全屏卡。
+            var ccGo = NewChild(canvas.transform, "CharacterCustom");
+            var ccRt = (RectTransform)ccGo.transform;
+            ccRt.anchorMin = Vector2.zero;
+            ccRt.anchorMax = Vector2.one;
+            ccRt.offsetMin = Vector2.zero;
+            ccRt.offsetMax = Vector2.zero;
+            var ccView = ccGo.AddComponent<CharacterCustomView>();
+
+            ngView.Bind(world, chat, stateMachine, ccView);
+            ccView.Bind(world, chat, stateMachine, ngView);
 
             // 无存档时显示 NewGameView（有存档时在 BootAsync 中已恢复世界，Player 非空）
             if (world.Player == null)

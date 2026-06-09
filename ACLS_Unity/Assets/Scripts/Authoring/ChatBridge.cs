@@ -5,6 +5,7 @@ using UnityEngine;
 using ACLS.Data;
 using ACLS.Llm;
 using ACLS.Sim;
+using ACLS.Logging;
 
 namespace ACLS.Authoring
 {
@@ -37,6 +38,7 @@ namespace ACLS.Authoring
 
         public LlmUsage LastUsage { get; private set; }
         public LlmUsage CumulativeUsage { get; private set; }
+        public float LastResponseTime { get; private set; }  // 最近一次 LLM 响应耗时（秒）
         public int CallCount => orchestrator?.CallCount ?? 0;
 
         public event Action<ChatMessage> OnMessage;
@@ -117,6 +119,11 @@ namespace ACLS.Authoring
                 OnUsageReported?.Invoke(last, cumulative);
             };
 
+            orchestrator.OnResponseTime += seconds =>
+            {
+                LastResponseTime = seconds;
+            };
+
             orchestrator.OnBusyChanged += busy => OnBusyChanged?.Invoke(busy);
 
             orchestrator.OnThinkingChanged += thinking =>
@@ -162,19 +169,23 @@ namespace ACLS.Authoring
             if (!Ready || Busy) return;
             if (currentChoices == null || index < 0 || index >= currentChoices.Count) return;
 
+            Log.Info(Log.Channels.Llm, "[Timing] Choose click t={0:F3}s index={1}", Time.realtimeSinceStartup, index);
             var choice = currentChoices[index];
 
-            // 1. Show outcome narration instantly (player-visible, not in History).
+            // 1. Show player's choice as "你" message.
+            OnMessage?.Invoke(new ChatMessage(ChatRole.User, choice.Label));
+
+            // 2. Show outcome narration instantly (player-visible, not in History).
             OnMessage?.Invoke(new ChatMessage(ChatRole.Assistant, choice.OutcomeNarration));
 
-            // 2. Apply effects and advance time (world-side mutation).
+            // 3. Apply effects and advance time (world-side mutation).
             ApplyEffects(choice);
             AdvanceTime(choice.DaysPassed);
 
-            // 3. Next LLM turn. The outcome is embedded so the LLM can
+            // 4. Next LLM turn. The outcome is embedded so the LLM can
             //    continue the narrative while preserving user/assistant alternation.
             string action = $"[玩家选择：{choice.Label}]\n[上一幕后果]：{choice.OutcomeNarration}\n请承接上文，描写下一幕，并给出 3-4 个新选项。";
-            orchestrator?.SendAction(action, displayText: action);
+            orchestrator?.SendAction(action, displayText: choice.Label);
         }
 
         public void StartWorldBuild(string roleDescription, string worldDescription, Action<bool> onComplete)
@@ -228,7 +239,7 @@ namespace ACLS.Authoring
             OnMessage?.Invoke(new ChatMessage(ChatRole.User, text));
 
             string action = $"[玩家自由行动：{text}] 请承接上文，描写下一幕，并给出 1-4 个新选项。";
-            orchestrator?.SendAction(action, displayText: action);
+            orchestrator?.SendAction(action, displayText: text);
         }
 
         // -------- helpers --------

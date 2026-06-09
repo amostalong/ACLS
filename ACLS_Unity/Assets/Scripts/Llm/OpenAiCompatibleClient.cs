@@ -99,6 +99,7 @@ namespace ACLS.Llm
                 ["max_tokens"] = maxTokens <= 0 ? 8192 : maxTokens,
                 ["messages"] = openAiMessages,
                 ["stream"] = true,
+                ["response_format"] = new JObject { ["type"] = "json_object" },
             };
 
             if (tools != null && tools.Count > 0)
@@ -121,6 +122,10 @@ namespace ACLS.Llm
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
             req.Content = new StringContent(requestJson, Encoding.UTF8, "application/json");
 
+            var swTotal = System.Diagnostics.Stopwatch.StartNew();
+            bool firstChunk = true;
+            int chunkCount = 0;
+
             using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
             if (!resp.IsSuccessStatusCode)
             {
@@ -135,6 +140,7 @@ namespace ACLS.Llm
 
             var textSb = new StringBuilder();
             var toolCalls = new List<LlmToolCall>();
+            var usage = new LlmUsage();
             // Track tool calls by index during streaming
             var toolCallAccum = new Dictionary<int, LlmToolCall>();
 
@@ -146,6 +152,13 @@ namespace ACLS.Llm
 
                 string data = line.Substring(5).Trim();
                 if (data == "[DONE]") break;
+
+                chunkCount++;
+                if (firstChunk)
+                {
+                    firstChunk = false;
+                    Log.Info(Log.Channels.Network, "[OpenAI] TTFT: {0:F2}s", swTotal.Elapsed.TotalSeconds);
+                }
 
                 try
                 {
@@ -199,6 +212,14 @@ namespace ACLS.Llm
                     {
                         // Will collect tool calls after streaming ends
                     }
+
+                    // Usage (typically in last chunk)
+                    var usageObj = obj["usage"] as JObject;
+                    if (usageObj != null)
+                    {
+                        usage.InputTokens = (int?)usageObj["prompt_tokens"] ?? usage.InputTokens;
+                        usage.OutputTokens = (int?)usageObj["completion_tokens"] ?? usage.OutputTokens;
+                    }
                 }
                 catch (JsonException)
                 {
@@ -215,11 +236,13 @@ namespace ACLS.Llm
             var result = new LlmResponse
             {
                 Content = textSb.ToString(),
+                Usage = usage,
                 ToolCalls = toolCalls.Count > 0 ? toolCalls : null,
             };
 
-            if (verbose) Log.Info(Log.Channels.Network, "[OpenAI] ← {0} chars tools={1}",
-                result.Content.Length, toolCalls.Count);
+            swTotal.Stop();
+            Log.Info(Log.Channels.Network, "[OpenAI] ← {0} chars tools={1} | {2:F2}s total, {3} chunks",
+                result.Content.Length, toolCalls.Count, swTotal.Elapsed.TotalSeconds, chunkCount);
 
             return result;
         }

@@ -13,8 +13,8 @@ namespace ACLS.Logging
     /// <code>
     /// Log.Info(Log.Channels.Llm, "收到流式响应，长度={0}", length);
     /// Log.Warn(Log.Channels.Sim, "状态异常");
-    /// if (Log.IsEnabled(Log.Channels.Battle, LogLevel.Debug))
-    ///     Log.Debug(Log.Channels.Battle, $"复杂拼串 {expensive()}");
+    /// if (Log.IsEnabled(Log.Channels.UI, LogLevel.Debug))
+    ///     Log.Debug(Log.Channels.UI, $"复杂拼串 {expensive()}");
     /// </code>
     /// </summary>
     public static class Log
@@ -26,11 +26,9 @@ namespace ACLS.Logging
             public const string LlmReply  = "LlmReply";
             public const string WorldBuild= "WorldBuild";
             public const string Stage     = "StageCreate";
-            public const string CharExpand= "CharExpand";
             public const string Sim       = "Sim";
             public const string UI        = "UI";
             public const string Save      = "Save";
-            public const string Battle    = "Battle";
             public const string System    = "System";
             public const string Content   = "Content";
             public const string Network   = "Network";
