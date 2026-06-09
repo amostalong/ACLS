@@ -1,1 +1,5 @@
 /.vsconfig
+
+# LLM 配置含 API key，不入库
+Assets/Content/Config/LlmConfig.asset
+Assets/Content/Config/LlmConfig.asset.meta
