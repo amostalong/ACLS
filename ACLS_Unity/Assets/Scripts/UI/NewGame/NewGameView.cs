@@ -182,7 +182,7 @@ namespace ACLS.UI
             sr.content = ctRt;
 
             BuildPresets();
-            BuildNameRow();
+            //BuildNameRow();
         }
 
         private void BuildPresets()
@@ -235,7 +235,7 @@ namespace ACLS.UI
                     var dRt = (RectTransform)desc.transform;
                     dRt.anchorMin = new Vector2(0, 0); dRt.anchorMax = new Vector2(1, 1);
                     dRt.offsetMin = new Vector2(14, 6); dRt.offsetMax = new Vector2(-14, -36);
-                    desc.text = $"{p.Description}　|　{p.TraitLabel}　|　{p.LocationName}";
+                    desc.text = $"{p.Description}　|　{p.LocationName}";
                 }
 
                 presetBtns.Add(go.GetComponent<Button>());
@@ -454,7 +454,6 @@ namespace ACLS.UI
                 $"性别：{(sex == Sex.Male ? "男" : "女")}\n" +
                 $"年龄：22\n" +
                 $"出身地：{ngPreset.LocationName}\n" +
-                $"特质：{ngPreset.TraitLabel}\n" +
                 $"背景：{ngPreset.CharBlurb}";
 
             chat.StartWorldPipeline(roleDesc, ngPreset.WorldBlurb, success =>

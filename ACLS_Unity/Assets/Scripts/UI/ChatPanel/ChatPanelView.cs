@@ -719,7 +719,7 @@ namespace ACLS.UI
             t.font = UiKit.TmpFont;
             t.fontSize = 19;
             t.color = Color.white;
-            t.alignment = TextAlignmentOptions.Left;
+            t.alignment = TextAlignmentOptions.TopLeft;
             t.enableWordWrapping = false;
             t.richText = false;
             field.textComponent = t;
