@@ -32,6 +32,9 @@ namespace ACLS.UI
 
         public bool IsDone => _done;
 
+        public int GetShownCount() => _shownCount;
+        public int GetTargetLen() => _target?.Length ?? 0;
+
         public event System.Action<TypewriterSlot> OnDone;
 
         // ── 绑定 ──

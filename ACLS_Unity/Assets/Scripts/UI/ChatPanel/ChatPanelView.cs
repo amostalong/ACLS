@@ -621,7 +621,13 @@ namespace ACLS.UI
         private void OnStreamingEnd()
         {
             if (_activeSlot != null && !_activeSlot.IsDone)
+            {
+                int currentLen = _activeSlot.GetShownCount();
+                int targetLen = _activeSlot.GetTargetLen();
+                Log.Info(Log.Channels.UI, "[Typewriter] OnStreamingEnd: shown={0} targetLen={1} remaining={2}",
+                    currentLen, targetLen, targetLen - currentLen);
                 _activeSlot.Flush();
+            }
         }
 
         private void OnSystemMessage(string message)

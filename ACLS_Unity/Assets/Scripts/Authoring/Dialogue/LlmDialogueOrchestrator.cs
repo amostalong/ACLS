@@ -822,7 +822,7 @@ namespace ACLS.Authoring
                 {
                     last = t;
                     int now = Environment.TickCount;
-                    if (now - lastEmit >= 50)
+                    //if (now - lastEmit >= 50)
                     {
                         lastEmit = now;
                         SetThinking(t);
@@ -832,15 +832,14 @@ namespace ACLS.Authoring
                 {
                     lastNarration = n;
                     int now = Environment.TickCount;
-                    if (now - lastNarrationEmit >= 50)
-                    {
-                        lastNarrationEmit = now;
-                        Log.Info(Log.Channels.Llm, "[NarDelta] len={0} preview={1}", n.Length, Truncate(n, 80));
-                        if (PlayerLoopHelper.IsMainThread)
-                            OnNarrationDelta?.Invoke(n);
-                        else
-                            UniTask.Post(() => OnNarrationDelta?.Invoke(n));
-                    }
+                    // 不节流：每个 delta 立即推。LLM 一次调用 delta 总数有限（200-500），
+                    // 推一次只赋值一个字符串，性能可接受。
+                    lastNarrationEmit = now;
+                    Log.Info(Log.Channels.Llm, "[NarDelta] len={0} preview={1}", n.Length, Truncate(n, 80));
+                    if (PlayerLoopHelper.IsMainThread)
+                        OnNarrationDelta?.Invoke(n);
+                    else
+                        UniTask.Post(() => OnNarrationDelta?.Invoke(n));
                 }
             }, ct);
 
@@ -934,14 +933,12 @@ namespace ACLS.Authoring
                         {
                             lastNarration = n;
                             int now = Environment.TickCount;
-                            if (now - lastNarrationEmit >= 50)
-                            {
-                                lastNarrationEmit = now;
-                                if (PlayerLoopHelper.IsMainThread)
-                                    OnNarrationDelta?.Invoke(n);
-                                else
-                                    UniTask.Post(() => OnNarrationDelta?.Invoke(n));
-                            }
+                            // 不节流
+                            lastNarrationEmit = now;
+                            if (PlayerLoopHelper.IsMainThread)
+                                OnNarrationDelta?.Invoke(n);
+                            else
+                                UniTask.Post(() => OnNarrationDelta?.Invoke(n));
                         }
                     }, ct);
 
