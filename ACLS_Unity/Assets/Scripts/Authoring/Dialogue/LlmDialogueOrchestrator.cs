@@ -822,11 +822,8 @@ namespace ACLS.Authoring
                 {
                     last = t;
                     int now = Environment.TickCount;
-                    //if (now - lastEmit >= 50)
-                    {
-                        lastEmit = now;
-                        SetThinking(t);
-                    }
+                    lastEmit = now;
+                    SetThinking(t);
                 }
                 if (TryExtractNarration(raw, out var n) && n != lastNarration)
                 {
