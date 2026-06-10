@@ -25,20 +25,14 @@ namespace ACLS.UI
         private Button cancelBtn;
         private RectTransform choicesContainer;
         private List<Button> choiceButtons = new List<Button>();
-        private TextMeshProUGUI streamingMsg;
-        private int streamingGen;
-        private string streamingTimestamp;  // 当前流式消息的开始时间
 
-        // ── 等待动画状态 ──
-        private Coroutine loadingDotsCoroutine;
+        // ── 打字机槽 ──
+        private TypewriterSlot _activeSlot;
+        private IReadOnlyList<LlmReply.Choice> _pendingChoices;
+        private bool _streamingMsgActive;
 
-        // ── 打字机状态 ──
-        // 基础间隔；通过 minInterval 防止短消息播得太慢
-        private const float TypewriterCharInterval = 0.025f;
-        private Coroutine typewriterCoroutine;
-        private string typewriterTarget;
-        private IReadOnlyList<LlmReply.Choice> pendingChoices;
-        private bool isTypewriting;
+        // ── 打字机池 ──
+        private List<TypewriterSlot> _slotPool = new List<TypewriterSlot>();
 
         public void Bind(ChatBridge bridge)
         {
@@ -57,6 +51,7 @@ namespace ACLS.UI
             bridge.OnMessageDelta += OnMessageDelta;
             bridge.OnSystemMessage += OnSystemMessage;
             bridge.OnStreamingBegin += OnStreamingBegin;
+            bridge.OnStreamingEnd += OnStreamingEnd;
 
             if (!bridge.Ready)
             {
@@ -73,7 +68,15 @@ namespace ACLS.UI
 
         private void OnDestroy()
         {
-            if (loadingDotsCoroutine != null) { StopCoroutine(loadingDotsCoroutine); loadingDotsCoroutine = null; }
+            // 清理打字机池
+            for (int i = _slotPool.Count - 1; i >= 0; i--)
+            {
+                if (_slotPool[i] != null)
+                    Destroy(_slotPool[i].gameObject);
+            }
+            _slotPool.Clear();
+
+            if (_activeSlot != null) { _activeSlot.FinishNow(); _activeSlot = null; }
             if (bridge != null)
             {
                 bridge.OnMessage -= AppendMessage;
@@ -83,6 +86,7 @@ namespace ACLS.UI
                 bridge.OnMessageDelta -= OnMessageDelta;
                 bridge.OnSystemMessage -= OnSystemMessage;
                 bridge.OnStreamingBegin -= OnStreamingBegin;
+                bridge.OnStreamingEnd -= OnStreamingEnd;
             }
         }
 
@@ -228,13 +232,29 @@ namespace ACLS.UI
         private void RefreshChoices(IReadOnlyList<LlmReply.Choice> choices)
         {
             // ── 打字机播放中：缓冲，不立即显示 ──
-            if (isTypewriting)
+            if (_activeSlot != null && !_activeSlot.IsDone)
             {
-                pendingChoices = choices;
+                _pendingChoices = choices;
                 return;
             }
 
             ApplyChoices(choices);
+        }
+
+        private void OnSlotDone(TypewriterSlot slot)
+        {
+            if (_activeSlot == slot) _activeSlot = null;
+            slot.OnDone -= OnSlotDone;
+            ReturnSlot(slot);
+
+            // 刷新缓冲的 choices
+            if (_pendingChoices != null)
+            {
+                var toShow = _pendingChoices;
+                _pendingChoices = null;
+                ApplyChoices(toShow);
+            }
+            ScrollToBottom();
         }
 
         private void ApplyChoices(IReadOnlyList<LlmReply.Choice> choices)
@@ -417,53 +437,37 @@ namespace ACLS.UI
 
         private void AppendMessage(ChatMessage m)
         {
-            // ── 旁白消息结束：启动打字机动画 ──
-            if (streamingMsg != null && m.Role == ChatRole.Assistant)
+            bool isAssistant = m.Role == ChatRole.Assistant;
+
+            // ── 流式旁白结束：Flush 打字机（Msg TMP 在 OnStreamingBegin 已创建） ──
+            if (isAssistant && _activeSlot != null && !_activeSlot.IsDone)
             {
-                // 独立 meta 行：token 用量，不走打字机、响应到达立即显示
                 if (bridge != null) AppendMetaItem(bridge.LastUsage, bridge.CumulativeUsage);
-
-                // 关键：streamingMsg.text 已经是流式阶段累积的最终文本（由 OnMessageDelta 逐次写入），
-                // 如果再用 m.Content 重新构造 typewriterTarget，可能在末尾与 streamingMsg 不一致，
-                // 导致打字机“停止在最后几个字”。这里以 streamingMsg.text 为准。
-                Log.Info(Log.Channels.UI, "[Typewriter] 流已结束、准备收尾: gen={0} msgLen={1} contentLen={2}",
-                    streamingGen, streamingMsg?.text.Length ?? 0, m.Content?.Length ?? 0);
-
-                // 某些回合会传过来 OnMessage（例如 pipeline 步骈的 narration）但根本没有流式填充，
-                // 此时 streamingMsg.text 还是 “思考中” 占位符 → 换成正式内容。
-                if (streamingMsg != null && !string.IsNullOrEmpty(m.Content)
-                    && (streamingMsg.text.Contains("思考中") || streamingMsg.text.Length < m.Content.Length / 2))
-                {
-                    string ts = streamingTimestamp;
-                    string label = "<color=#f5d57a><b>旁白</b></color>";
-                    string full = $"{label} {ts}\n{Escape(m.Content)}";
-                    streamingMsg.text = full;
-                    typewriterTarget = full;
-                }
-                else
-                {
-                    typewriterTarget = streamingMsg != null ? streamingMsg.text : "";
-                }
-
-                // 启动收尾（主要起 Reset 状态、刷新 pending choices、推进 streamingGen 的作用）
-                if (typewriterCoroutine != null) StopCoroutine(typewriterCoroutine);
-                typewriterCoroutine = StartCoroutine(TypewriterRoutine());
+                Log.Info(Log.Channels.UI, "[Typewriter] Flush: contentLen={0}", m.Content?.Length ?? 0);
+                _activeSlot.Flush(Escape(m.Content));
                 return;
             }
 
-            string prefix = m.Role switch
-            {
-                ChatRole.User => "<color=#7fb6ff><b>你</b></color>",
-                ChatRole.Assistant => "<color=#f5d57a><b>旁白</b></color>",
-                ChatRole.System => "<color=#ff8888><b>系统</b></color>",
-                _ => "",
-            };
-            var lineText = $"{prefix} {Timestamp()}\n{Escape(m.Content)}";
+            // ── 静态消息 ──
+            string prefix = isAssistant
+                ? "<color=#f5d57a><b>旁白</b></color>"
+                : m.Role switch
+                {
+                    ChatRole.User => "<color=#7fb6ff><b>你</b></color>",
+                    ChatRole.System => "<color=#ff8888><b>系统</b></color>",
+                    _ => "",
+                };
 
-            CreateMessageItem(lineText);
+            // 打字机已在 OnStreamingBegin 创建了 Msg TMP，跳过重复创建
+            if (!(isAssistant && _streamingMsgActive))
+            {
+                var lineText = $"{prefix} {Timestamp()}\n{Escape(m.Content)}";
+                CreateMessageItem(lineText);
+            }
+            _streamingMsgActive = false;
 
             // 独立 meta 行：assistant 消息附加 token 用量
-            if (m.Role == ChatRole.Assistant && bridge != null)
+            if (isAssistant && bridge != null)
                 AppendMetaItem(bridge.LastUsage, bridge.CumulativeUsage);
 
             ScrollToBottom();
@@ -515,8 +519,9 @@ namespace ACLS.UI
         {
             if (!busy)
             {
-                // 停止等待动画（出错/中断时清理）
-                if (loadingDotsCoroutine != null) { StopCoroutine(loadingDotsCoroutine); loadingDotsCoroutine = null; }
+                // Busy 结束但打字机槽仍在"思考中"（没收到 narration）→ 强制收尾
+                if (_activeSlot != null && !_activeSlot.IsDone)
+                    _activeSlot.FinishNow();
             }
             SetInteractable(!busy && bridge.Ready);
             sendBtn.gameObject.SetActive(!busy);
@@ -562,148 +567,62 @@ namespace ACLS.UI
 
         private void OnStreamingBegin()
         {
-            // 停止上次的等待动画
-            if (loadingDotsCoroutine != null) { StopCoroutine(loadingDotsCoroutine); loadingDotsCoroutine = null; }
+            _pendingChoices = null;
+            _streamingMsgActive = false;  // 清理上一轮残留标记
 
-            // 有正在播放的打字机→先写完当前消息，再开始新的
-            if (typewriterCoroutine != null)
-            {
-                StopCoroutine(typewriterCoroutine);
-                typewriterCoroutine = null;
-                isTypewriting = false;
-                Log.Info(Log.Channels.UI, "[Typewriter] 被新流中断，强制收尾: gen={0} targetLen={1}",
-                    streamingGen, typewriterTarget?.Length ?? 0);
-                if (!string.IsNullOrEmpty(typewriterTarget))
-                {
-                    FinishTypewriting(typewriterTarget);
-                }
-                else
-                {
-                    // 打字机未真正启动，直接清掉流式槽
-                    streamingMsg = null;
-                    streamingGen++;
-                }
-            }
-            pendingChoices = null;
+            // 如有旧打字机在运行，先终止（会触发 OnSlotDone 回收入池）
+            if (_activeSlot != null)
+                _activeSlot.FinishNow();
 
-            streamingTimestamp = Timestamp();
-            streamingGen++;
-            // 创建加载占位消息，流式文本到达后自动替换
-            streamingMsg = CreateMessageItem($"<color=#f5d57a><b>旁白</b></color> {streamingTimestamp}\n<color=#7c7c8a>思考中</color>");
-            loadingDotsCoroutine = StartCoroutine(LoadingDotsRoutine());
-        }
+            string header = $"<color=#f5d57a><b>旁白</b></color> {Timestamp()}";
 
-        /// <summary>思考中·→··→··· 循环动画</summary>
-        private System.Collections.IEnumerator LoadingDotsRoutine()
-        {
-            int dotCount = 0;
-            while (true)
-            {
-                dotCount = (dotCount % 4) + 1;
-                string dots = new string('·', dotCount);
-                if (streamingMsg != null)
-                    streamingMsg.text = $"<color=#f5d57a><b>旁白</b></color> {streamingTimestamp}\n<color=#7c7c8a>思考中{dots}</color>";
-                yield return new WaitForSeconds(0.5f);
-            }
+            // 创建永久 Msg TMP（留在 historyContent 中不被回收）
+            var tmp = CreateMessageItem(header + "\n");
+            _streamingMsgActive = true;
+
+            // 从池中取打字机控制器
+            var slot = RentSlot();
+            slot.Assign(tmp, header);
+            slot.OnDone += OnSlotDone;
+            _activeSlot = slot;
         }
 
         private void OnMessageDelta(string partialNarration)
         {
-            // 流式文本到达，停止等待动画
-            if (loadingDotsCoroutine != null)
-            {
-                StopCoroutine(loadingDotsCoroutine);
-                loadingDotsCoroutine = null;
-            }
-
-            int capturedGen = streamingGen;
-            if (capturedGen != streamingGen) return;
-
-            if (streamingMsg == null)
-                streamingMsg = CreateMessageItem("");
-
-            if (capturedGen != streamingGen)
-            {
-                streamingMsg = null;
-                return;
-            }
-
-            string label = "<color=#f5d57a><b>旁白</b></color>";
-            string full = $"{label} {streamingTimestamp}\n{Escape(partialNarration)}";
-
-            // 打字机动画中：只缓存目标文本，不覆盖当前显示
-            if (isTypewriting)
-            {
-                typewriterTarget = full;
-            }
-            else
-            {
-                streamingMsg.text = full;
-                typewriterTarget = full;
-            }
+            if (_activeSlot == null || _activeSlot.IsDone) return;
+            _activeSlot.Feed(Escape(partialNarration));
             ScrollToBottom();
         }
 
-        /// <summary>打字机协程：逐字显示剩余字符。
-        /// 关键：循环内部始终从字段读取最新 typewriterTarget，保证中途到达的新 delta 也能补齐。</summary>
-        private System.Collections.IEnumerator TypewriterRoutine()
+        // ── 打字机池 ──
+
+        private TypewriterSlot RentSlot()
         {
-            isTypewriting = true;
-
-            int startLen = streamingMsg != null ? streamingMsg.text.Length : 0;
-            int targetLen = (typewriterTarget ?? "").Length;
-            Log.Info(Log.Channels.UI, "[Typewriter] 启动: gen={0} startLen={1} targetLen={2}",
-                streamingGen, startLen, targetLen);
-
-            // 协程期间 typewriterTarget 可能会被 OnMessageDelta 延长；
-            // 循环条件用当前最新字段，确保能"追"上最新目标。
-            while (true)
+            foreach (var s in _slotPool)
             {
-                string latestTarget = typewriterTarget ?? "";
-                int latestLen = latestTarget.Length;
-                int currentLen = streamingMsg != null ? streamingMsg.text.Length : 0;
-
-                if (currentLen >= latestLen)
-                {
-                    // 已显示到最新目标→结束
-                    FinishTypewriting(latestTarget);
-                    yield break;
-                }
-
-                // 写下一个字符
-                int nextLen = currentLen + 1;
-                if (streamingMsg != null)
-                    streamingMsg.text = latestTarget.Substring(0, nextLen);
-
-                yield return new WaitForSeconds(TypewriterCharInterval);
+                if (!s.gameObject.activeInHierarchy)
+                    return s;
             }
+
+            var go = new GameObject("TypewriterSlot", typeof(TypewriterSlot));
+            go.transform.SetParent(transform, false);
+            go.SetActive(false);
+            var slot = go.GetComponent<TypewriterSlot>();
+            _slotPool.Add(slot);
+            return slot;
         }
 
-        /// <summary>打字机完成：设置完整文本，清空流式槽，刷新缓冲的 choices</summary>
-        private void FinishTypewriting(string finalText)
+        private void ReturnSlot(TypewriterSlot slot)
         {
-            int finalLen = finalText?.Length ?? 0;
-            Log.Info(Log.Channels.UI, "[Typewriter] 完成: gen={0} finalLen={1} streamingMsgNull={2}",
-                streamingGen, finalLen, streamingMsg == null);
+            slot.gameObject.SetActive(false);
+        }
 
-            if (streamingMsg != null)
-                streamingMsg.text = finalText;
+        // ── 流结束：提前 Flush，不等 AppendMessage ──
 
-            isTypewriting = false;
-            typewriterCoroutine = null;
-
-            // 完成：streamingMsg 转为普通消息，不再接受后续 delta
-            streamingMsg = null;
-            streamingGen++;
-
-            // 刷新缓冲的 choices
-            if (pendingChoices != null)
-            {
-                var toShow = pendingChoices;
-                pendingChoices = null;
-                ApplyChoices(toShow);
-            }
-            ScrollToBottom();
+        private void OnStreamingEnd()
+        {
+            if (_activeSlot != null && !_activeSlot.IsDone)
+                _activeSlot.Flush();
         }
 
         private void OnSystemMessage(string message)

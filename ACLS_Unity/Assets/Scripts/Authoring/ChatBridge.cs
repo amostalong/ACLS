@@ -50,6 +50,7 @@ namespace ACLS.Authoring
         public event Action<string> OnMessageDelta;
         public event Action<string> OnSystemMessage;
         public event Action OnStreamingBegin;
+        public event Action OnStreamingEnd;
 
         private World world;
         private ILlmClient llm;
@@ -98,6 +99,11 @@ namespace ACLS.Authoring
             orchestrator.OnStreamingBegin += () =>
             {
                 OnStreamingBegin?.Invoke();
+            };
+
+            orchestrator.OnStreamingEnd += () =>
+            {
+                OnStreamingEnd?.Invoke();
             };
 
             orchestrator.OnChoices += choices =>

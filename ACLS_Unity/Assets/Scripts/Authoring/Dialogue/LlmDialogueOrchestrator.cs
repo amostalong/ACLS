@@ -53,6 +53,7 @@ namespace ACLS.Authoring
         public event Action<string> OnNarrationDelta;          // streaming narration delta
         public event Action<string> OnSystemDelta;             // system status delta (pipeline progress, etc.)
         public event Action OnStreamingBegin;                  // fired before each new streaming call
+        public event Action OnStreamingEnd;                    // fired after stream ends, before ParseResponse
 
         // ---- tools ----
         public ToolRegistry ToolRegistry { get; } = ToolRegistry.Instance;
@@ -959,6 +960,7 @@ namespace ACLS.Authoring
 
                     // ── 发出最后一次完整 narration delta（确保打字机看到完整文本） ──
                     EmitFinalNarrationDelta(raw);
+                    OnStreamingEnd?.Invoke();
 
                     resp.Content = raw.ToString();
 
