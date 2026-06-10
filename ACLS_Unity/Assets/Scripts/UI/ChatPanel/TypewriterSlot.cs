@@ -11,6 +11,9 @@ namespace ACLS.UI
     /// 上游 (LLM 流) 通过 Feed(fullText) 报告最新累计文本（不是 delta，是当前完整文本）。
     /// 流暂停/抖动不影响打字节奏。
     /// 唯一的"打完"条件是 _shownCount >= _target.Length 且 _flushed == true（且 grace 结束）。
+    ///
+    /// 不可打断：slot 不提供外部取消接口，只能由自己的协程完成。
+    /// 外部要"停止"应让 Unity 销毁这个 slot 的 GameObject（会触发 OnDestroy 停协程）。
     /// </summary>
     public sealed class TypewriterSlot : MonoBehaviour
     {
@@ -78,25 +81,6 @@ namespace ACLS.UI
             if (_done || _display == null) return;
             _flushed = true;
             _flushTime = Time.realtimeSinceStartup;
-        }
-
-        /// <summary>立刻完成——新回合打断时调用。</summary>
-        public void FinishNow()
-        {
-            if (_done) return;
-            _done = true;
-            if (_routine != null) { StopCoroutine(_routine); _routine = null; }
-
-            if (_display != null)
-            {
-                _display.text = _hasInput
-                    ? _headerLine + "\n" + _target
-                    : _headerLine + "\n<color=#7c7c8a>(已中断)</color>";
-            }
-
-            var d = OnDone;
-            OnDone = null;
-            d?.Invoke(this);
         }
 
         private void OnDestroy()

@@ -68,15 +68,15 @@ namespace ACLS.UI
 
         private void OnDestroy()
         {
-            // 清理打字机池
+            // 清理打字机池（销毁 GameObject 会自动停掉协程，无需显式 FinishNow）
             for (int i = _slotPool.Count - 1; i >= 0; i--)
             {
                 if (_slotPool[i] != null)
                     Destroy(_slotPool[i].gameObject);
             }
             _slotPool.Clear();
+            _activeSlot = null;
 
-            if (_activeSlot != null) { _activeSlot.FinishNow(); _activeSlot = null; }
             if (bridge != null)
             {
                 bridge.OnMessage -= AppendMessage;
@@ -519,12 +519,8 @@ namespace ACLS.UI
 
         private void OnBusyChanged(bool busy)
         {
-            if (!busy)
-            {
-                // Busy 结束但打字机槽仍在"思考中"（没收到 narration）→ 强制收尾
-                if (_activeSlot != null && !_activeSlot.IsDone)
-                    _activeSlot.FinishNow();
-            }
+            // 不再在这里 FinishNow()：打字机只管自己的节奏，由协程内部完成。
+            // Busy 状态只影响 UI 交互（按钮/输入框可用性），不影响打字动画。
             SetInteractable(!busy && bridge.Ready);
             sendBtn.gameObject.SetActive(!busy);
             cancelBtn.gameObject.SetActive(busy);
@@ -572,9 +568,8 @@ namespace ACLS.UI
             _pendingChoices = null;
             _streamingMsgActive = false;  // 清理上一轮残留标记
 
-            // 如有旧打字机在运行，先终止（会触发 OnSlotDone 回收入池）
-            if (_activeSlot != null)
-                _activeSlot.FinishNow();
+            // 不打断旧打字机：让它自己跑完。旧 slot 绑定的是上一个 Msg TMP，
+            // 新流用新 Msg TMP + 新 slot 即可。两个打字机完全独立运行。
 
             string header = $"<color=#f5d57a><b>旁白</b></color> {Timestamp()}";
 
@@ -582,7 +577,7 @@ namespace ACLS.UI
             var tmp = CreateMessageItem(header + "\n");
             _streamingMsgActive = true;
 
-            // 从池中取打字机控制器
+            // 从池中取打字机控制器（若旧 slot 已完成并回池则复用）
             var slot = RentSlot();
             slot.Assign(tmp, header);
             slot.OnDone += OnSlotDone;
