@@ -7,9 +7,10 @@ namespace ACLS.UI
     /// <summary>
     /// 打字机文本动画控制器。不自带 TMP，通过 Assign() 绑定外部 TMP。
     ///
-    /// 主动驱动模型：内部每 tick 自增 _shownCount，从 _pending 累积缓冲区取字符显示。
-    /// 流数据只负责扩展 _pending（通过 Feed），流暂停/抖动不影响打字节奏。
-    /// 唯一的"打完"条件是 _pending 长度 <= _shownCount 且 _flushed == true。
+    /// 主动驱动模型：内部每 tick 自增 _shownCount，从 _target 读取要显示的当前累计文本。
+    /// 上游 (LLM 流) 通过 Feed(fullText) 报告最新累计文本（不是 delta，是当前完整文本）。
+    /// 流暂停/抖动不影响打字节奏。
+    /// 唯一的"打完"条件是 _shownCount >= _target.Length 且 _flushed == true（且 grace 结束）。
     /// </summary>
     public sealed class TypewriterSlot : MonoBehaviour
     {
@@ -20,7 +21,8 @@ namespace ACLS.UI
         private TextMeshProUGUI _display;
         private string _headerLine;
 
-        private readonly StringBuilder _pending = new StringBuilder();
+        // 目标文本（上游报告的当前完整文本）
+        private string _target = "";
         private int _shownCount;
         private bool _hasInput;
         private bool _flushed;
@@ -45,7 +47,7 @@ namespace ACLS.UI
 
             _display = tmp;
             _headerLine = headerLine;
-            _pending.Clear();
+            _target = "";
             _shownCount = 0;
             _hasInput = false;
             _flushed = false;
@@ -58,16 +60,19 @@ namespace ACLS.UI
             _routine = StartCoroutine(AnimateRoutine());
         }
 
-        /// <summary>流式数据注入：把新到达的片段追加到累积缓冲。</summary>
-        public void Feed(string newText)
+        /// <summary>
+        /// 上游报告的当前累计完整文本。覆盖语义（不是 delta）。
+        /// 上游应保证此值单调不减（流是累积的）。
+        /// </summary>
+        public void Feed(string fullText)
         {
             if (_done || _display == null) return;
-            if (string.IsNullOrEmpty(newText)) return;
-            _pending.Append(newText);
+            if (string.IsNullOrEmpty(fullText)) return;
+            _target = fullText;
             _hasInput = true;
         }
 
-        /// <summary>告知流结束。Flush 后若 pending 仍有字符，会继续打直到打完后触发 OnDone。</summary>
+        /// <summary>告知流结束。Flush 后若 _target 仍有未显示字符，会继续打直到打完后触发 OnDone。</summary>
         public void Flush()
         {
             if (_done || _display == null) return;
@@ -85,7 +90,7 @@ namespace ACLS.UI
             if (_display != null)
             {
                 _display.text = _hasInput
-                    ? _headerLine + "\n" + _pending.ToString()
+                    ? _headerLine + "\n" + _target
                     : _headerLine + "\n<color=#7c7c8a>(已中断)</color>";
             }
 
@@ -115,34 +120,34 @@ namespace ACLS.UI
             }
 
             // Phase 2 — 逐字显示
-            // 主动驱动：每 tick 自己往前推一格，不依赖流推送
+            // 主动驱动：每 tick 自己往前推一格，不依赖上游推数据
             while (true)
             {
-                int targetLen = _pending.Length;
+                int targetLen = _target?.Length ?? 0;
 
                 if (_shownCount < targetLen)
                 {
                     _shownCount++;
                     if (_display != null)
-                        _display.text = _headerLine + "\n" + _pending.ToString(0, _shownCount);
+                        _display.text = _headerLine + "\n" + _target.Substring(0, _shownCount);
                     yield return new WaitForSeconds(CharInterval);
                     continue;
                 }
 
-                // 已追上 pending：等 Flush 信号
+                // 已追上 _target：等 Flush 信号
                 if (_flushed)
                 {
-                    // Flush 后给一小段 grace 期：避免刚 Flush 就有字符没到就提前结束
+                    // Flush 后给一段 grace 期：避免刚 Flush 就有字符没到就提前结束
                     while (_flushed
                            && Time.realtimeSinceStartup - _flushTime < FlushGraceSeconds
-                           && _shownCount >= _pending.Length)
+                           && _shownCount >= (_target?.Length ?? 0))
                     {
                         yield return new WaitForSeconds(CharInterval);
                     }
-                    if (_shownCount >= _pending.Length)
+                    if (_shownCount >= (_target?.Length ?? 0))
                     {
                         if (_display != null)
-                            _display.text = _headerLine + "\n" + _pending.ToString();
+                            _display.text = _headerLine + "\n" + (_target ?? "");
                         _done = true;
                         var d = OnDone;
                         OnDone = null;
@@ -152,7 +157,7 @@ namespace ACLS.UI
                     continue;
                 }
 
-                // 既没有新字符也未 Flush → 静止等待
+                // 既没有未显示字符也未 Flush → 静止等待
                 yield return null;
             }
         }

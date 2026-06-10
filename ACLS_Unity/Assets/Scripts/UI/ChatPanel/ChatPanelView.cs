@@ -592,7 +592,9 @@ namespace ACLS.UI
         private void OnMessageDelta(string partialNarration)
         {
             if (_activeSlot == null || _activeSlot.IsDone) return;
-            _activeSlot.Feed(Escape(partialNarration));
+            string escaped = Escape(partialNarration);
+            Log.Info(Log.Channels.UI, "[Typewriter] Feed: inLen={0} escapedLen={1}", partialNarration?.Length ?? 0, escaped.Length);
+            _activeSlot.Feed(escaped);
             ScrollToBottom();
         }
 

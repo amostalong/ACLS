@@ -835,6 +835,7 @@ namespace ACLS.Authoring
                     if (now - lastNarrationEmit >= 50)
                     {
                         lastNarrationEmit = now;
+                        Log.Info(Log.Channels.Llm, "[NarDelta] len={0} preview={1}", n.Length, Truncate(n, 80));
                         if (PlayerLoopHelper.IsMainThread)
                             OnNarrationDelta?.Invoke(n);
                         else
