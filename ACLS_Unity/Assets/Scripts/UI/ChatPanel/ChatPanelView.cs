@@ -443,8 +443,10 @@ namespace ACLS.UI
             if (isAssistant && _activeSlot != null && !_activeSlot.IsDone)
             {
                 if (bridge != null) AppendMetaItem(bridge.LastUsage, bridge.CumulativeUsage);
-                Log.Info(Log.Channels.UI, "[Typewriter] Flush: contentLen={0}", m.Content?.Length ?? 0);
-                _activeSlot.Flush(Escape(m.Content));
+                // 用最终内容再喂一次（兜底覆盖最后几个字符的解析修正），然后 Flush
+                _activeSlot.Feed(Escape(m.Content));
+                Log.Info(Log.Channels.UI, "[Typewriter] AppendMessage Flush: contentLen={0}", m.Content?.Length ?? 0);
+                _activeSlot.Flush();
                 return;
             }
 

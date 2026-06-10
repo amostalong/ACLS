@@ -1,23 +1,31 @@
+using System.Text;
 using TMPro;
 using UnityEngine;
 
 namespace ACLS.UI
 {
     /// <summary>
-    /// 打字机文本动画控制器。不自带 TMP，通过 Assign() 绑定外部 TMP 进行逐字显示。
-    /// 流式数据通过 Feed/Flush 注入，打完触发 OnDone 通知调用方回收。
+    /// 打字机文本动画控制器。不自带 TMP，通过 Assign() 绑定外部 TMP。
+    ///
+    /// 主动驱动模型：内部每 tick 自增 _shownCount，从 _pending 累积缓冲区取字符显示。
+    /// 流数据只负责扩展 _pending（通过 Feed），流暂停/抖动不影响打字节奏。
+    /// 唯一的"打完"条件是 _pending 长度 <= _shownCount 且 _flushed == true。
     /// </summary>
     public sealed class TypewriterSlot : MonoBehaviour
     {
         private const float CharInterval = 0.025f;
         private const float DotsInterval = 0.5f;
+        private const float FlushGraceSeconds = 0.5f;
 
         private TextMeshProUGUI _display;
         private string _headerLine;
-        private string _fullText = "";
+
+        private readonly StringBuilder _pending = new StringBuilder();
         private int _shownCount;
-        private bool _started;
+        private bool _hasInput;
         private bool _flushed;
+        private float _flushTime;
+
         private Coroutine _routine;
         private bool _done;
 
@@ -37,10 +45,11 @@ namespace ACLS.UI
 
             _display = tmp;
             _headerLine = headerLine;
-            _fullText = "";
+            _pending.Clear();
             _shownCount = 0;
-            _started = false;
+            _hasInput = false;
             _flushed = false;
+            _flushTime = 0f;
             _done = false;
 
             if (_display != null)
@@ -49,28 +58,21 @@ namespace ACLS.UI
             _routine = StartCoroutine(AnimateRoutine());
         }
 
-        /// <summary>流式数据注入（完整最新文本）。</summary>
-        public void Feed(string escapedText)
+        /// <summary>流式数据注入：把新到达的片段追加到累积缓冲。</summary>
+        public void Feed(string newText)
         {
             if (_done || _display == null) return;
-            _fullText = escapedText ?? "";
-            _started = true;
+            if (string.IsNullOrEmpty(newText)) return;
+            _pending.Append(newText);
+            _hasInput = true;
         }
 
-        /// <summary>告知全部文本已到达。参数为最终文本，可省略（沿用上次 Feed 的值）。</summary>
-        public void Flush(string escapedText)
-        {
-            if (_done || _display == null) return;
-            _fullText = escapedText ?? "";
-            _started = true;
-            _flushed = true;
-        }
-
-        /// <summary>仅标记完成，不更新文本（已通过 Feed 拿到最终文本时用）。</summary>
+        /// <summary>告知流结束。Flush 后若 pending 仍有字符，会继续打直到打完后触发 OnDone。</summary>
         public void Flush()
         {
             if (_done || _display == null) return;
             _flushed = true;
+            _flushTime = Time.realtimeSinceStartup;
         }
 
         /// <summary>立刻完成——新回合打断时调用。</summary>
@@ -82,8 +84,8 @@ namespace ACLS.UI
 
             if (_display != null)
             {
-                _display.text = _started
-                    ? _headerLine + "\n" + _fullText
+                _display.text = _hasInput
+                    ? _headerLine + "\n" + _pending.ToString()
                     : _headerLine + "\n<color=#7c7c8a>(已中断)</color>";
             }
 
@@ -104,7 +106,7 @@ namespace ACLS.UI
         {
             // Phase 1 — 等待数据
             int dots = 0;
-            while (!_started)
+            while (!_hasInput)
             {
                 dots = (dots % 4) + 1;
                 if (_display != null)
@@ -113,29 +115,45 @@ namespace ACLS.UI
             }
 
             // Phase 2 — 逐字显示
+            // 主动驱动：每 tick 自己往前推一格，不依赖流推送
             while (true)
             {
-                int targetLen = _fullText.Length;
-                if (_shownCount >= targetLen)
+                int targetLen = _pending.Length;
+
+                if (_shownCount < targetLen)
                 {
-                    if (_flushed)
+                    _shownCount++;
+                    if (_display != null)
+                        _display.text = _headerLine + "\n" + _pending.ToString(0, _shownCount);
+                    yield return new WaitForSeconds(CharInterval);
+                    continue;
+                }
+
+                // 已追上 pending：等 Flush 信号
+                if (_flushed)
+                {
+                    // Flush 后给一小段 grace 期：避免刚 Flush 就有字符没到就提前结束
+                    while (_flushed
+                           && Time.realtimeSinceStartup - _flushTime < FlushGraceSeconds
+                           && _shownCount >= _pending.Length)
+                    {
+                        yield return new WaitForSeconds(CharInterval);
+                    }
+                    if (_shownCount >= _pending.Length)
                     {
                         if (_display != null)
-                            _display.text = _headerLine + "\n" + _fullText;
+                            _display.text = _headerLine + "\n" + _pending.ToString();
                         _done = true;
                         var d = OnDone;
                         OnDone = null;
                         d?.Invoke(this);
                         yield break;
                     }
-                    yield return null;
                     continue;
                 }
 
-                _shownCount++;
-                if (_display != null)
-                    _display.text = _headerLine + "\n" + _fullText.Substring(0, _shownCount);
-                yield return new WaitForSeconds(CharInterval);
+                // 既没有新字符也未 Flush → 静止等待
+                yield return null;
             }
         }
     }
