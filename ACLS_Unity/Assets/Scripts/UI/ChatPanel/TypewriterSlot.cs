@@ -1,6 +1,6 @@
-using System.Text;
 using TMPro;
 using UnityEngine;
+using ACLS.Logging;
 
 namespace ACLS.UI
 {
@@ -10,38 +10,32 @@ namespace ACLS.UI
     /// 主动驱动模型：内部每 tick 自增 _shownCount，从 _target 读取要显示的当前累计文本。
     /// 上游 (LLM 流) 通过 Feed(fullText) 报告最新累计文本（不是 delta，是当前完整文本）。
     /// 流暂停/抖动不影响打字节奏。
-    /// 唯一的"打完"条件是 _shownCount >= _target.Length 且 _flushed == true（且 grace 结束）。
     ///
-    /// 不可打断：slot 不提供外部取消接口，只能由自己的协程完成。
-    /// 外部要"停止"应让 Unity 销毁这个 slot 的 GameObject（会触发 OnDestroy 停协程）。
+    /// 完成条件：_shownCount >= _target.Length && _flushed == true。
+    /// 不可打断：外部不提供 FinishNow，只有协程自己决定何时完成。
     /// </summary>
     public sealed class TypewriterSlot : MonoBehaviour
     {
         private const float CharInterval = 0.025f;
         private const float DotsInterval = 0.5f;
-        private const float FlushGraceSeconds = 0.5f;
 
         private TextMeshProUGUI _display;
         private string _headerLine;
 
-        // 目标文本（上游报告的当前完整文本）
         private string _target = "";
         private int _shownCount;
         private bool _hasInput;
         private bool _flushed;
-        private float _flushTime;
 
         private Coroutine _routine;
         private bool _done;
 
         public bool IsDone => _done;
 
-        /// <summary>打字完成事件。调用方应在此处理回收。</summary>
         public event System.Action<TypewriterSlot> OnDone;
 
         // ── 绑定 ──
 
-        /// <summary>绑定到外部 TMP 对象。调用方负责 TMP 的生命周期。</summary>
         public void Assign(TextMeshProUGUI tmp, string headerLine)
         {
             if (_routine != null) { StopCoroutine(_routine); _routine = null; }
@@ -54,7 +48,6 @@ namespace ACLS.UI
             _shownCount = 0;
             _hasInput = false;
             _flushed = false;
-            _flushTime = 0f;
             _done = false;
 
             if (_display != null)
@@ -63,10 +56,7 @@ namespace ACLS.UI
             _routine = StartCoroutine(AnimateRoutine());
         }
 
-        /// <summary>
-        /// 上游报告的当前累计完整文本。覆盖语义（不是 delta）。
-        /// 上游应保证此值单调不减（流是累积的）。
-        /// </summary>
+        /// <summary>上游报告的当前累计完整文本。覆盖语义。</summary>
         public void Feed(string fullText)
         {
             if (_done || _display == null) return;
@@ -75,12 +65,11 @@ namespace ACLS.UI
             _hasInput = true;
         }
 
-        /// <summary>告知流结束。Flush 后若 _target 仍有未显示字符，会继续打直到打完后触发 OnDone。</summary>
+        /// <summary>告知流结束。打字机打完 _target 中所有字符后触发 OnDone。</summary>
         public void Flush()
         {
             if (_done || _display == null) return;
             _flushed = true;
-            _flushTime = Time.realtimeSinceStartup;
         }
 
         private void OnDestroy()
@@ -104,7 +93,7 @@ namespace ACLS.UI
             }
 
             // Phase 2 — 逐字显示
-            // 主动驱动：每 tick 自己往前推一格，不依赖上游推数据
+            // 主动驱动：每 tick 自增 _shownCount，不依赖上游推送节奏
             while (true)
             {
                 int targetLen = _target?.Length ?? 0;
@@ -118,30 +107,20 @@ namespace ACLS.UI
                     continue;
                 }
 
-                // 已追上 _target：等 Flush 信号
+                // 所有字符已显示 → 检查是否已完成
                 if (_flushed)
                 {
-                    // Flush 后给一段 grace 期：避免刚 Flush 就有字符没到就提前结束
-                    while (_flushed
-                           && Time.realtimeSinceStartup - _flushTime < FlushGraceSeconds
-                           && _shownCount >= (_target?.Length ?? 0))
-                    {
-                        yield return new WaitForSeconds(CharInterval);
-                    }
-                    if (_shownCount >= (_target?.Length ?? 0))
-                    {
-                        if (_display != null)
-                            _display.text = _headerLine + "\n" + (_target ?? "");
-                        _done = true;
-                        var d = OnDone;
-                        OnDone = null;
-                        d?.Invoke(this);
-                        yield break;
-                    }
-                    continue;
+                    if (_display != null)
+                        _display.text = _headerLine + "\n" + (_target ?? "");
+                    _done = true;
+                    Log.Info(Log.Channels.UI, "[Typewriter] 打字完成: shown={0}", _shownCount);
+                    var d = OnDone;
+                    OnDone = null;
+                    d?.Invoke(this);
+                    yield break;
                 }
 
-                // 既没有未显示字符也未 Flush → 静止等待
+                // 尚未 Flush → 等待上游输送更多数据
                 yield return null;
             }
         }
