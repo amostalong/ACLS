@@ -28,6 +28,7 @@ namespace ACLS.Llm
     {
         public string Thinking;
         public string Date;           // LLM-friendly date: "0184年01月08日"
+        public int DaysPassed;
         public string Narration;
         public List<Participant> SceneParticipants = new List<Participant>();
         public List<Choice> Choices = new List<Choice>();
@@ -53,6 +54,7 @@ namespace ACLS.Llm
             public string SuggestedState;      // e.g. "DeepDialogue"
             public List<string> SkillTriggers = new List<string>();
             public List<EffectSpec> Effects = new List<EffectSpec>();
+            public List<Participant> SceneParticipants = new List<Participant>();
         }
 
         // Symbolic effect — ChatBridge / EffectParser maps to runtime EffectOp.
@@ -66,6 +68,66 @@ namespace ACLS.Llm
             public string Target;     // character name (Chinese)
             public string Flag;       // world flag key (SetFlag / ClearFlag)
             public int Delta;
+        }
+
+        public static bool TryParseEffectsOnly(string raw, out LlmReply reply, out string error)
+        {
+            reply = null;
+            error = null;
+
+            if (!TryParseJsonObject(raw, out var obj, out error))
+                return false;
+
+            var result = new LlmReply();
+            result.Date = ((string)(obj["dt"] ?? obj["date"]) ?? "").Trim();
+            var dpToken = obj["dp"] ?? obj["days_passed"];
+            if (dpToken != null && dpToken.Type != JTokenType.Null)
+            {
+                try { result.DaysPassed = (int)dpToken; } catch { result.DaysPassed = 0; }
+                if (result.DaysPassed < 0) result.DaysPassed = 0;
+                if (result.DaysPassed > 365) result.DaysPassed = 365;
+            }
+            result.System = new SystemBlock
+            {
+                SuggestedState = ((string)(obj["ss"] ?? obj["suggested_state"]) ?? "").Trim(),
+            };
+
+            if ((obj["sk"] ?? obj["skill_triggers"]) is JArray skArr)
+            {
+                foreach (var sk in skArr)
+                {
+                    var s = (string)sk;
+                    if (!string.IsNullOrWhiteSpace(s))
+                        result.System.SkillTriggers.Add(s.Trim());
+                }
+            }
+
+            if ((obj["ef"] ?? obj["effects"]) is JArray eArr)
+            {
+                foreach (var e in eArr)
+                {
+                    var spec = ParseEffect(e);
+                    if (spec != null) result.System.Effects.Add(spec);
+                }
+            }
+
+            if ((obj["sp"] ?? obj["scene_participants"]) is JArray pArr)
+            {
+                foreach (var p in pArr)
+                {
+                    var name = (string)(p["n"] ?? p["name"]);
+                    var role = (string)(p["r"] ?? p["role"]);
+                    if (string.IsNullOrWhiteSpace(name)) continue;
+                    result.System.SceneParticipants.Add(new Participant
+                    {
+                        Name = name.Trim(),
+                        Role = (role ?? "").Trim(),
+                    });
+                }
+            }
+
+            reply = result;
+            return true;
         }
 
         // Tolerant parser: strips ```json fences, leading/trailing prose,
@@ -83,39 +145,8 @@ namespace ACLS.Llm
                 return false;
             }
 
-            string text = raw.Trim();
-
-            // Strip ```json ... ``` fences if present.
-            if (text.StartsWith("```"))
-            {
-                int firstNewline = text.IndexOf('\n');
-                if (firstNewline >= 0) text = text.Substring(firstNewline + 1);
-                int closingFence = text.LastIndexOf("```", StringComparison.Ordinal);
-                if (closingFence >= 0) text = text.Substring(0, closingFence);
-                text = text.Trim();
-            }
-
-            // Find outermost {...}
-            int openIdx = text.IndexOf('{');
-            int closeIdx = text.LastIndexOf('}');
-            if (openIdx < 0 || closeIdx <= openIdx)
-            {
-                error = "未找到 JSON 对象（{...}）";
-                Log.Warn(Log.Channels.LlmReply, "❌ {0}", error);
-                Log.Debug(Log.Channels.LlmReply, "原始响应:\n{0}", raw);
+            if (!TryParseJsonObject(raw, out var obj, out error))
                 return false;
-            }
-            string json = text.Substring(openIdx, closeIdx - openIdx + 1);
-
-            JObject obj;
-            try { obj = JObject.Parse(json); }
-            catch (JsonException ex)
-            {
-                error = "JSON 解析失败：" + ex.Message;
-                Log.Warn(Log.Channels.LlmReply, "❌ {0}", error);
-                Log.Debug(Log.Channels.LlmReply, "原始响应:\n{0}", raw);
-                return false;
-            }
 
             string narration = ((string)(obj["nar"] ?? obj["narration"]) ?? "");
             if (string.IsNullOrWhiteSpace(narration))
@@ -236,6 +267,44 @@ namespace ACLS.Llm
                 result.SceneParticipants.Count,
                 result.System != null,
                 raw.Length);
+
+            return true;
+        }
+
+        private static bool TryParseJsonObject(string raw, out JObject obj, out string error)
+        {
+            obj = null;
+            error = null;
+
+            string text = raw.Trim();
+            if (text.StartsWith("```"))
+            {
+                int firstNewline = text.IndexOf('\n');
+                if (firstNewline >= 0) text = text.Substring(firstNewline + 1);
+                int closingFence = text.LastIndexOf("```", StringComparison.Ordinal);
+                if (closingFence >= 0) text = text.Substring(0, closingFence);
+                text = text.Trim();
+            }
+
+            int openIdx = text.IndexOf('{');
+            int closeIdx = text.LastIndexOf('}');
+            if (openIdx < 0 || closeIdx <= openIdx)
+            {
+                error = "未找到 JSON 对象（{...}）";
+                Log.Warn(Log.Channels.LlmReply, "❌ {0}", error);
+                Log.Debug(Log.Channels.LlmReply, "原始响应:\n{0}", raw);
+                return false;
+            }
+
+            string json = text.Substring(openIdx, closeIdx - openIdx + 1);
+            try { obj = JObject.Parse(json); }
+            catch (JsonException ex)
+            {
+                error = "JSON 解析失败：" + ex.Message;
+                Log.Warn(Log.Channels.LlmReply, "❌ {0}", error);
+                Log.Debug(Log.Channels.LlmReply, "原始响应:\n{0}", raw);
+                return false;
+            }
 
             return true;
         }

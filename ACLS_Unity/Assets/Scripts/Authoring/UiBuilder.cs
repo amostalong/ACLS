@@ -12,7 +12,7 @@ namespace ACLS.Authoring
     {
         public const float HUD_HEIGHT = 64f;
 
-        public static void Build(World world, GameClockDriver clock, ChatBridge chat, GameStateMachine stateMachine)
+        public static void Build(World world, ChatBridge chat, GameStateMachine stateMachine)
         {
             UiKit.TmpFont = UiKit.ResolveFont(20);
 
@@ -43,7 +43,7 @@ namespace ACLS.Authoring
             hudRt.pivot = new Vector2(0.5f, 1);
             hudRt.anchoredPosition = Vector2.zero;
             hudRt.sizeDelta = new Vector2(0, HUD_HEIGHT);
-            hudGo.AddComponent<HudView>().Bind(world, clock, chat);
+            hudGo.AddComponent<HudView>().Bind(world, chat);
 
             // ChatPanel — fills entire area below HUD (full width, no avatar bar).
             if (chat != null)
@@ -122,6 +122,7 @@ namespace ACLS.Authoring
             debugRt.offsetMin = Vector2.zero;
             debugRt.offsetMax = Vector2.zero;
             var debugView = debugGo.AddComponent<DebugPanelView>();
+            debugView.Bind(world);
             debugView.Build();
             hudGo.GetComponent<HudView>().SetDebugPanel(debugView);
         }

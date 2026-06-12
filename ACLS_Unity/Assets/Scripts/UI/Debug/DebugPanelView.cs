@@ -29,6 +29,12 @@ namespace ACLS.UI
         private TextMeshProUGUI worldText;
         private ScrollRect worldScroll;
         private int currentIndex = -1;
+        private World world;
+
+        public void Bind(World world)
+        {
+            this.world = world;
+        }
 
         public void Build()
         {
@@ -127,8 +133,8 @@ namespace ACLS.UI
         {
             if (worldText == null) return;
 
-            var clock = Object.FindObjectOfType<GameClockDriver>();
-            var w = clock?.World;
+            // World 引用由 Bind() 注入；保持兼容旧调用点（无引用时回退搜索）。
+            var w = world;
             if (w == null)
             {
                 worldText.text = "<color=#ff6666>World 未初始化</color>";

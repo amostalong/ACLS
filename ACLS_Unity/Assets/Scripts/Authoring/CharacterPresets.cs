@@ -16,6 +16,16 @@ namespace ACLS.Authoring
             public int TraitId;
             public string TraitLabel;
             public string Blurb;
+
+            // 预设角色数据（玩家）
+            public string CharName;
+            public string CharCourtesy;
+            public int CharAge;
+            public CharSex CharSex;
+            public string CharBackgroundStory;
+            public string CharValues;
+            public string CharCurrentGoal;
+            public string CharSecret;
         }
 
         private static PresetDatabaseSO _db;
@@ -56,6 +66,14 @@ namespace ACLS.Authoring
                         TraitId      = e.TraitId,
                         TraitLabel   = e.TraitLabel,
                         Blurb        = e.CharBlurb,
+                        CharName            = e.CharName,
+                        CharCourtesy        = e.CharCourtesy,
+                        CharAge             = e.CharAge,
+                        CharSex             = e.CharSex,
+                        CharBackgroundStory = e.CharBackgroundStory,
+                        CharValues          = e.CharValues,
+                        CharCurrentGoal     = e.CharCurrentGoal,
+                        CharSecret          = e.CharSecret,
                     });
                 }
                 _cached = list;

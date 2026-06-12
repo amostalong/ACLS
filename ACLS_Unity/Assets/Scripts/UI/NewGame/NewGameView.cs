@@ -16,8 +16,9 @@ namespace ACLS.UI
     public sealed class NewGameView : MonoBehaviour
     {
         private const float CardW = 780f;
-        private const float CardVPadding = 100f;  // Card 上下各留 100px
-        private const float PresetItemH = 80f;
+        private const float CardTopOffset = 120f;     // Card 顶端距离屏幕顶部 120px（顶对齐）
+        private const float CardBottomPad = 24f;      // Card 底端到屏幕底 24px
+        private const float PresetItemH = 200f;
         private const float PresetSpacing = 8f;
 
         private static readonly Color SelectedColor   = new Color(0.55f, 0.42f, 0.18f, 0.97f);
@@ -85,7 +86,10 @@ namespace ACLS.UI
             card = new GameObject("NgCard", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
             card.transform.SetParent(transform, false);
             var rt = (RectTransform)card.transform;
-            rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(0.5f, 0.5f);
+            // 顶对齐：anchor + pivot 都在 (0.5, 1)，sizeDelta.y 即高度
+            rt.anchorMin = new Vector2(0.5f, 1f);
+            rt.anchorMax = new Vector2(0.5f, 1f);
+            rt.pivot = new Vector2(0.5f, 1f);
             rt.sizeDelta = new Vector2(CardW, ResizeCardHeight());
             card.GetComponent<Image>().color = new Color(0.13f, 0.13f, 0.17f, 0.97f);
 
@@ -182,7 +186,6 @@ namespace ACLS.UI
             sr.content = ctRt;
 
             BuildPresets();
-            //BuildNameRow();
         }
 
         private void BuildPresets()
@@ -227,15 +230,24 @@ namespace ACLS.UI
                     var tRt = (RectTransform)title.transform;
                     tRt.anchorMin = new Vector2(0, 1); tRt.anchorMax = new Vector2(1, 1);
                     tRt.pivot = new Vector2(0.5f, 1);
-                    tRt.offsetMin = new Vector2(14, -32); tRt.offsetMax = new Vector2(-14, -8);
+                    tRt.offsetMin = new Vector2(14, -34); tRt.offsetMax = new Vector2(-14, -10);
                     title.text = $"{p.Title}　·　{p.Era}";
 
-                    var desc = UiKit.CreateText(go.transform, "Desc", 17, TextAlignmentOptions.TopLeft);
-                    desc.color = new Color(0.82f, 0.82f, 0.82f, 1f);
+                    var sub = UiKit.CreateText(go.transform, "Sub", 18, TextAlignmentOptions.TopLeft);
+                    sub.color = new Color(0.92f, 0.85f, 0.65f, 1f);
+                    var sRt = (RectTransform)sub.transform;
+                    sRt.anchorMin = new Vector2(0, 1); sRt.anchorMax = new Vector2(1, 1);
+                    sRt.pivot = new Vector2(0.5f, 1);
+                    sRt.offsetMin = new Vector2(14, -64); sRt.offsetMax = new Vector2(-14, -40);
+                    string charLine = BuildCharLine(p);
+                    sub.text = charLine ?? $"{p.LocationName}";
+
+                    var desc = UiKit.CreateText(go.transform, "Desc", 16, TextAlignmentOptions.TopLeft);
+                    desc.color = new Color(0.78f, 0.78f, 0.78f, 1f);
                     var dRt = (RectTransform)desc.transform;
                     dRt.anchorMin = new Vector2(0, 0); dRt.anchorMax = new Vector2(1, 1);
-                    dRt.offsetMin = new Vector2(14, 6); dRt.offsetMax = new Vector2(-14, -36);
-                    desc.text = $"{p.Description}　|　{p.LocationName}";
+                    dRt.offsetMin = new Vector2(14, 8); dRt.offsetMax = new Vector2(-14, -68);
+                    desc.text = p.CharBlurb;
                 }
 
                 presetBtns.Add(go.GetComponent<Button>());
@@ -244,73 +256,15 @@ namespace ACLS.UI
             ApplyPresetHighlight();
         }
 
-        // -------- browse: name / sex row --------
-
-        private void BuildNameRow()
+        // 拼角色概要：名字 · 年岁 · 出身地
+        private static string BuildCharLine(NewGamePresets.Preset p)
         {
-            nameRow = new GameObject("NameRow",
-                typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
-            nameRow.transform.SetParent(browseContent, false);
-            var nrt = (RectTransform)nameRow.transform;
-            nrt.anchorMin = new Vector2(0, 1);
-            nrt.anchorMax = new Vector2(1, 1);
-            nrt.pivot = new Vector2(0.5f, 1);
-            nrt.sizeDelta = new Vector2(0, 50f);
-            nrt.anchoredPosition = Vector2.zero;
-            var nle = nameRow.GetComponent<LayoutElement>();
-            nle.minHeight = 50f;
-            nle.preferredHeight = 50f;
-            nle.flexibleHeight = 0f;
-            var hlg = nameRow.GetComponent<HorizontalLayoutGroup>();
-            hlg.spacing = 4f;
-            hlg.padding = new RectOffset(0, 0, 0, 0);
-            hlg.childAlignment = TextAnchor.MiddleLeft;
-            hlg.childControlWidth = false;
-            hlg.childControlHeight = true;
-            hlg.childForceExpandWidth = false;
-            hlg.childForceExpandHeight = true;
-
-            // 姓名*
-            var nameLab = UiKit.CreateText(nameRow.transform, "NameLab", 19, TextAlignmentOptions.Left);
-            var nlLe = nameLab.gameObject.AddComponent<LayoutElement>();
-            nlLe.minWidth = nlLe.preferredWidth = 60f;
-            nlLe.flexibleWidth = 0f;
-            nameLab.text = "姓名*:";
-
-            nameInput = ChatPanelView.MakeTmpInput(nameRow.transform, "NameInput", "如 张明", 6);
-            var niLe = nameInput.gameObject.AddComponent<LayoutElement>();
-            niLe.minWidth = niLe.preferredWidth = 180f;
-            niLe.flexibleWidth = 0f;
-
-            // 字
-            var courtLab = UiKit.CreateText(nameRow.transform, "CourtLab", 19, TextAlignmentOptions.Left);
-            var clLe = courtLab.gameObject.AddComponent<LayoutElement>();
-            clLe.minWidth = clLe.preferredWidth = 30f;
-            clLe.flexibleWidth = 0f;
-            courtLab.text = "字:";
-
-            courtesyInput = ChatPanelView.MakeTmpInput(nameRow.transform, "CourtesyInput", "可空", 4);
-            var ciLe = courtesyInput.gameObject.AddComponent<LayoutElement>();
-            ciLe.minWidth = ciLe.preferredWidth = 150f;
-            ciLe.flexibleWidth = 0f;
-
-            // 性别
-            maleBtn = UiKit.CreateButton(nameRow.transform, "Male", "男", () => { _sex = Sex.Male; ApplySexHighlight(); });
-            var mLe = maleBtn.gameObject.AddComponent<LayoutElement>();
-            mLe.minWidth = mLe.preferredWidth = 70f;
-            mLe.flexibleWidth = 0f;
-
-            femaleBtn = UiKit.CreateButton(nameRow.transform, "Female", "女", () => { _sex = Sex.Female; ApplySexHighlight(); });
-            var fLe = femaleBtn.gameObject.AddComponent<LayoutElement>();
-            fLe.minWidth = fLe.preferredWidth = 70f;
-            fLe.flexibleWidth = 0f;
-
-            ApplySexHighlight();
-
-            // Default random name
-            var pair = Names.RandomPlayerName();
-            nameInput.text = pair.Given;
-            courtesyInput.text = pair.Courtesy;
+            var parts = new List<string>();
+            string who = !string.IsNullOrWhiteSpace(p.CharName) ? p.CharName : null;
+            if (who != null) parts.Add(who);
+            if (p.CharAge > 0) parts.Add($"{p.CharAge}岁");
+            if (!string.IsNullOrWhiteSpace(p.LocationName)) parts.Add(p.LocationName);
+            return parts.Count == 0 ? null : string.Join(" · ", parts);
         }
 
         // -------- start button --------
@@ -353,12 +307,12 @@ namespace ACLS.UI
         // ================================================================
 
 
-        // Card 高度 = parent 高度 - 上下各 100px
+        // Card 高度 = 屏幕高 - 顶/底间距（固定，不随内容撑高）
         private float ResizeCardHeight()
         {
             var prt = transform as RectTransform;
             float parentH = prt != null ? prt.rect.height : 1080f;
-            return Mathf.Max(400f, parentH - CardVPadding * 2f);
+            return Mathf.Max(400f, parentH - CardTopOffset - CardBottomPad);
         }
 
         private void Awake()
@@ -369,6 +323,7 @@ namespace ACLS.UI
             {
                 var cardRt = (RectTransform)card.transform;
                 cardRt.sizeDelta = new Vector2(CardW, ResizeCardHeight());
+                cardRt.anchoredPosition = new Vector2(0, -CardTopOffset);
             }
         }
 
@@ -391,6 +346,51 @@ namespace ACLS.UI
             }
 
             _selectedIdx = idx;
+
+            // 用预设的默认姓名/字/性别预填输入区（玩家仍可改）
+            if (nameInput != null && !string.IsNullOrWhiteSpace(p.CharName))
+                nameInput.text = p.CharName;
+            if (courtesyInput != null && !string.IsNullOrWhiteSpace(p.CharCourtesy))
+                courtesyInput.text = p.CharCourtesy;
+            if (p.CharSex == CharSex.Male || p.CharSex == CharSex.Female)
+            {
+                _sex = p.CharSex == CharSex.Male ? Sex.Male : Sex.Female;
+                ApplySexHighlight();
+            }
+
+            // 缺名字 → LLM 取名（loading 占位），失败降级为随机
+            bool needName = nameInput != null
+                && string.IsNullOrWhiteSpace(p.CharName)
+                && string.IsNullOrEmpty(nameInput.text);
+            bool needCourt = courtesyInput != null
+                && string.IsNullOrWhiteSpace(p.CharCourtesy)
+                && string.IsNullOrEmpty(courtesyInput.text);
+
+            if (needName || needCourt)
+            {
+                if (chat != null && !string.IsNullOrWhiteSpace(p.CharBlurb))
+                {
+                    if (nameInput != null) nameInput.text = "...";
+                    if (courtesyInput != null) courtesyInput.text = "...";
+                    chat.GenerateNameFromBlurb(
+                        p.CharBlurb, p.Era, p.LocationName,
+                        onName: n => { if (nameInput != null && needName) nameInput.text = n; },
+                        onCourtesy: c => { if (courtesyInput != null && needCourt) courtesyInput.text = c; },
+                        onError: err => {
+                            Log.Warn(Log.Channels.UI, "GenerateName failed: {0}", err);
+                            if (nameInput != null && needName && (nameInput.text == "..." || string.IsNullOrEmpty(nameInput.text)))
+                                nameInput.text = Names.RandomPlayerName().Given;
+                            if (courtesyInput != null && needCourt && (courtesyInput.text == "..." || string.IsNullOrEmpty(courtesyInput.text)))
+                                courtesyInput.text = Names.RandomPlayerName().Courtesy;
+                        });
+                }
+                else
+                {
+                    if (needName && nameInput != null) nameInput.text = Names.RandomPlayerName().Given;
+                    if (needCourt && courtesyInput != null) courtesyInput.text = Names.RandomPlayerName().Courtesy;
+                }
+            }
+
             ApplyPresetHighlight();
         }
 
@@ -418,14 +418,8 @@ namespace ACLS.UI
             if (_isLoading || world == null || chat == null) return;
             _isLoading = true;
 
+            // 姓名/字可空 — 缺失时让 LLM 在游戏开始后于后台生成
             string name = (nameInput?.text ?? "").Trim();
-            if (name.Length == 0)
-            {
-                ShowError("※ 姓名不能为空");
-                if (nameInput != null) nameInput.ActivateInputField();
-                _isLoading = false;
-                return;
-            }
             string courtesy = (courtesyInput?.text ?? "").Trim();
             BeginGame(name, courtesy, _sex);
         }
@@ -439,22 +433,44 @@ namespace ACLS.UI
             var ngPreset = NewGamePresets.All[_selectedIdx];
             world.Stage.WorldDescription = ngPreset.WorldBlurb;
 
+            int presetAge = ngPreset.CharAge > 0 ? ngPreset.CharAge : 22;
+
+            // 空名时给个临时随机占位，保证 ConfigurePlayer 不收空字符串
+            if (string.IsNullOrEmpty(name))
+            {
+                var tmp = Names.RandomPlayerName();
+                name = tmp.Given;
+                if (string.IsNullOrEmpty(courtesy)) courtesy = tmp.Courtesy;
+            }
+            else if (string.IsNullOrEmpty(courtesy))
+            {
+                courtesy = Names.RandomPlayerName().Courtesy;
+            }
+
             WorldFactory.ConfigurePlayer(
                 world,
                 name: name,
                 courtesy: courtesy,
                 sex: sex,
-                age: 22,
+                age: presetAge,
                 locationName: ngPreset.LocationName,
                 traitId: ngPreset.TraitId);
+
+            // 把预设里的 CHAR 字段写回玩家 Character
+            ApplyPresetCharData(world, ngPreset, sex);
 
             string roleDesc =
                 $"姓名：{name}\n" +
                 $"字：{courtesy}\n" +
                 $"性别：{(sex == Sex.Male ? "男" : "女")}\n" +
-                $"年龄：22\n" +
+                $"年龄：{presetAge}\n" +
                 $"出身地：{ngPreset.LocationName}\n" +
                 $"背景：{ngPreset.CharBlurb}";
+
+            // 玩家没填名字时，后台让 LLM 取一个贴背景的名字，写回 world.Player。
+            // 不影响当前流水线的 roleDesc（已用占位随机名），玩家能立刻进游戏。
+            bool playerTypedName = nameInput != null && !string.IsNullOrWhiteSpace(nameInput.text);
+            bool playerTypedCourt = courtesyInput != null && !string.IsNullOrWhiteSpace(courtesyInput.text);
 
             chat.StartWorldPipeline(roleDesc, ngPreset.WorldBlurb, success =>
             {
@@ -468,7 +484,45 @@ namespace ACLS.UI
                 var charPreset = NewGamePresets.ToCharacterPreset(ngPreset);
                 // 流水线已完成 L1 场景构建，直接开始开场叙事
                 chat.StartOpening(charPreset);
+
+                if (!playerTypedName && chat != null && !string.IsNullOrWhiteSpace(ngPreset.CharBlurb))
+                {
+                    chat.GenerateNameFromBlurb(
+                        ngPreset.CharBlurb, ngPreset.Era, ngPreset.LocationName,
+                        onName: n => {
+                            if (string.IsNullOrEmpty(n)) return;
+                            var pl = world?.GetCharacter(world.PlayerCharacterId);
+                            if (pl == null) return;
+                            pl.Name = n;
+                            world.NotifyPlayerSet();
+                            Log.Info(Log.Channels.UI, "PlayerName backfilled by LLM: {0}", n);
+                        },
+                        onCourtesy: c => {
+                            if (string.IsNullOrEmpty(c)) return;
+                            if (playerTypedCourt) return;
+                            var pl = world?.GetCharacter(world.PlayerCharacterId);
+                            if (pl == null) return;
+                            pl.Courtesy = c;
+                            world.NotifyPlayerSet();
+                        },
+                        onError: err => Log.Warn(Log.Channels.UI, "Background name gen failed: {0}", err));
+                }
             });
+        }
+
+        private static void ApplyPresetCharData(World world, NewGamePresets.Preset p, Sex sex)
+        {
+            var player = world?.GetCharacter(world.PlayerCharacterId);
+            if (player == null) return;
+
+            if (!string.IsNullOrWhiteSpace(p.CharBackgroundStory))
+                player.BackgroundStory = p.CharBackgroundStory;
+            if (!string.IsNullOrWhiteSpace(p.CharValues))
+                player.Values = p.CharValues;
+            if (!string.IsNullOrWhiteSpace(p.CharCurrentGoal))
+                player.CurrentGoal = p.CharCurrentGoal;
+            if (!string.IsNullOrWhiteSpace(p.CharSecret))
+                player.Secret = p.CharSecret;
         }
     }
 }

@@ -92,6 +92,94 @@ namespace ACLS.Authoring
             return sb.ToString();
         }
 
+        public string AssembleNarrationAndChoices(DialogueStateType stateType, string userInput = null)
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var sb = new StringBuilder();
+
+            sb.Append(config?.SystemPrompt ?? "");
+            sb.Append("\n\n").Append(FragmentFor(stateType));
+            sb.Append("\n\n").Append(NarrationTextFormatFor(stateType));
+
+            if (stateType == DialogueStateType.StagePlay && world.Stage != null)
+            {
+                if (!string.IsNullOrEmpty(world.Stage.WorldBuild)) sb.Append("\n\n[世界观设定]\n").Append(world.Stage.WorldBuild);
+                if (!string.IsNullOrEmpty(world.Stage.L4World)) sb.Append("\n\n[宏观背景]\n").Append(world.Stage.L4World);
+                if (!string.IsNullOrEmpty(world.Stage.L3Expanse)) sb.Append("\n\n[区域背景]\n").Append(world.Stage.L3Expanse);
+                if (!string.IsNullOrEmpty(world.Stage.L2Arena)) sb.Append("\n\n[近域层]\n").Append(world.Stage.L2Arena);
+                if (!string.IsNullOrEmpty(world.Stage.L1Stage)) sb.Append("\n\n[贴身层]\n").Append(world.Stage.L1Stage);
+
+                var player = world.Player;
+                if (player != null)
+                {
+                    var psb = new System.Text.StringBuilder();
+                    psb.Append($"姓名：{player.Name}，{player.AgeAt(world.Date)}岁，{(player.Sex == Sim.Sex.Male ? "男" : "女")}");
+                    if (!string.IsNullOrWhiteSpace(player.Courtesy)) psb.Append($"，字{player.Courtesy}");
+                    if (!string.IsNullOrWhiteSpace(player.BackgroundStory)) psb.Append($"\n[背景] {player.BackgroundStory}");
+                    if (!string.IsNullOrWhiteSpace(player.Values)) psb.Append($"\n[价值观] {player.Values}");
+                    if (!string.IsNullOrWhiteSpace(player.CurrentGoal)) psb.Append($"\n[近期目标] {player.CurrentGoal}");
+                    if (!string.IsNullOrWhiteSpace(player.Secret)) psb.Append($"\n[秘密] {player.Secret}");
+                    if (player.Connections != null && player.Connections.Count > 0)
+                        psb.Append($"\n[人脉] {string.Join("、", player.Connections)}");
+                    if (player.KnownFacts != null && player.KnownFacts.Count > 0)
+                        psb.Append($"\n[已知情报] {string.Join("、", player.KnownFacts)}");
+                    if (player.OwnedItems != null && player.OwnedItems.Count > 0)
+                        psb.Append($"\n[随身物品] {string.Join("、", player.OwnedItems)}");
+                    sb.Append("\n\n[主角信息]\n").Append(psb.ToString().Trim());
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(userInput))
+                sb.Append("\n\n").Append(userInput);
+
+            sw.Stop();
+            var result = sb.ToString();
+            ACLS.Logging.Log.Info(ACLS.Logging.Log.Channels.Llm, "[Timing] PromptAssembler.AssembleNarrationAndChoices({0}): {1:F2}s, 长度={2}", stateType, sw.Elapsed.TotalSeconds, result.Length);
+            return result;
+        }
+
+        public string AssembleEffectsOnly(DialogueStateType stateType, string userInput, string narrationText)
+        {
+            var sb = new StringBuilder();
+            sb.Append(config?.SystemPrompt ?? "");
+            sb.Append("\n\n").Append(EffectsOnlyFormatFor(stateType));
+
+            if (stateType == DialogueStateType.StagePlay && world.Stage != null)
+            {
+                if (!string.IsNullOrEmpty(world.Stage.WorldBuild)) sb.Append("\n\n[世界观设定]\n").Append(world.Stage.WorldBuild);
+                if (!string.IsNullOrEmpty(world.Stage.L4World)) sb.Append("\n\n[宏观背景]\n").Append(world.Stage.L4World);
+                if (!string.IsNullOrEmpty(world.Stage.L3Expanse)) sb.Append("\n\n[区域背景]\n").Append(world.Stage.L3Expanse);
+                if (!string.IsNullOrEmpty(world.Stage.L2Arena)) sb.Append("\n\n[近域层]\n").Append(world.Stage.L2Arena);
+                if (!string.IsNullOrEmpty(world.Stage.L1Stage)) sb.Append("\n\n[贴身层]\n").Append(world.Stage.L1Stage);
+            }
+
+            if (world?.Player != null)
+            {
+                var player = world.Player;
+                var psb = new System.Text.StringBuilder();
+                psb.Append($"姓名：{player.Name}，{player.AgeAt(world.Date)}岁，{(player.Sex == Sim.Sex.Male ? "男" : "女")}");
+                if (!string.IsNullOrWhiteSpace(player.Courtesy)) psb.Append($"，字{player.Courtesy}");
+                if (!string.IsNullOrWhiteSpace(player.BackgroundStory)) psb.Append($"\n[背景] {player.BackgroundStory}");
+                if (!string.IsNullOrWhiteSpace(player.Values)) psb.Append($"\n[价值观] {player.Values}");
+                if (!string.IsNullOrWhiteSpace(player.CurrentGoal)) psb.Append($"\n[近期目标] {player.CurrentGoal}");
+                if (!string.IsNullOrWhiteSpace(player.Secret)) psb.Append($"\n[秘密] {player.Secret}");
+                if (player.Connections != null && player.Connections.Count > 0)
+                    psb.Append($"\n[人脉] {string.Join("、", player.Connections)}");
+                if (player.KnownFacts != null && player.KnownFacts.Count > 0)
+                    psb.Append($"\n[已知情报] {string.Join("、", player.KnownFacts)}");
+                if (player.OwnedItems != null && player.OwnedItems.Count > 0)
+                    psb.Append($"\n[随身物品] {string.Join("、", player.OwnedItems)}");
+                sb.Append("\n\n[主角信息]\n").Append(psb.ToString().Trim());
+            }
+
+            if (!string.IsNullOrWhiteSpace(userInput))
+                sb.Append("\n\n[玩家动作]\n").Append(userInput);
+            if (!string.IsNullOrWhiteSpace(narrationText))
+                sb.Append("\n\n[本轮完整旁白]\n").Append(narrationText);
+
+            return sb.ToString();
+        }
+
         // Builds the stage-create prompt using world L4/L3 context + character data.
         public string AssembleStageCreate(CharacterPresets.Preset preset)
         {
@@ -142,6 +230,32 @@ namespace ACLS.Authoring
             _ => "",
         };
 
+        private static string NarrationTextFormatFor(DialogueStateType type) => type switch
+        {
+            DialogueStateType.StagePlay =>
+                "每次回复使用纯文本，不要 JSON。\n" +
+                "先输出 2-4 段中文叙事。\n" +
+                "叙事正文结束后，单独一行输出 --- 作为分隔线。\n" +
+                "分隔线后每行一个选项，格式固定为：1. 选项文本\\n2. 选项文本\\n3. 选项文本。\n" +
+                "总共输出 1-4 个选项。最后再单独一行输出 @effect yes 或 @effect no。不要额外解释，不要围栏。",
+            _ => ""
+        };
+
+        private static string EffectsOnlyFormatFor(DialogueStateType type) => type switch
+        {
+            DialogueStateType.StagePlay =>
+                "根据给定的世界上下文、玩家动作和本轮完整旁白，只判断需要落地到本地数据的修改。\n" +
+                "严格返回 JSON，不要任何 JSON 之外的文字：\n" +
+                "{\n" +
+                "  \"dt\": \"<可选，当前叙事日期，格式如 0184年01月08日>\",\n" +
+                "  \"ss\": \"<可选，建议状态>\",\n" +
+                "  \"sp\": [ {\"n\": \"...\", \"r\": \"...\"} ],\n" +
+                "  \"ef\": [ {\"kd\": \"...\", ...} ]\n" +
+                "}\n" +
+                "如果没有修改，返回空数组 ef，其他字段可省略。",
+            _ => ""
+        };
+
         private static string JsonSchemaFor(DialogueStateType type) => type switch
         {
             DialogueStateType.WorldBuild => "",
@@ -161,26 +275,7 @@ namespace ACLS.Authoring
                 "返回严格的 JSON，字段：family_background, social_circle[], recent_goal, secret, values, starting_assets{connections[], knowledge[], items[]}",
 
             DialogueStateType.StagePlay =>
-                "每次回复严格使用 JSON：\n" +
-                "{\n" +
-                "  \"th\": \"<你的推理过程，原样输出，尽量先输出该字段>\",\n" +
-                "  \"dt\": \"<当前叙事日期，格式如 0184年01月08日>\",\n" +
-                "  \"nar\": \"<2-4 段中文叙事>\",\n" +
-                "  \"sp\": [ {\"n\": \"...\", \"r\": \"...\"} ],\n" +
-                "  \"ch\": [\n" +
-                "    {\n" +
-                "      \"lb\": \"<10 字以内>\",\n" +
-                "      \"on\": \"<2-3 段>\",\n" +
-                "      \"dp\": <1..90>,\n" +
-                "      \"ef\": [ {\"kd\": \"...\", ...} ]\n" +
-                "    }\n" +
-                "  ],\n" +
-                "  \"_s\": {\n" +
-                "    \"ss\": \"Dialogue\",\n" +
-                "    \"sk\": [\"npc-psychology\", \"relationship-tracker\"]\n" +
-                "  }\n" +
-                "}\n" +
-                "_s 为可选。不要 JSON 之外的文字（含 ``` 围栏）。",
+                "每次回复使用纯文本：先输出 2-4 段中文叙事，再单独一行输出 ---，分隔线后每行一个选项（1. / 2. / 3.），最后一行输出 @effect yes 或 @effect no。不要 JSON，不要额外解释。",
 
             _ => "",
         };

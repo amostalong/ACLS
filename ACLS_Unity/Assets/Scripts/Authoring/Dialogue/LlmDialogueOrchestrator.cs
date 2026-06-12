@@ -155,18 +155,43 @@ namespace ACLS.Authoring
 
             Log.Info(Log.Channels.Llm, "▶ StartOpening: preset={0}", preset?.Title ?? preset?.Blurb);
             var state = new OpeningSceneState(this, preset);
-            string prompt = state.AssemblePrompt();
+            string narrationPrompt = PromptAssembler?.AssembleNarrationAndChoices(state.StateType, state.BuildOpeningAction()) ?? "";
 
             SetBusy(true);
             var thisCts = CancellationTokenSource.CreateLinkedTokenSource(lifetimeCts.Token);
             currentCts = thisCts;
             try
             {
-                var resp = await CompleteStreamWithThinking(prompt,
-                    new List<ChatMessage> { new ChatMessage(ChatRole.User, "开始") }, thisCts.Token);
-                TrackUsage(resp.Usage);
+                var messages = new List<ChatMessage> { new ChatMessage(ChatRole.User, "开始") };
+                var narrationResp = await CompleteNarrationAndChoicesStream(narrationPrompt, messages, thisCts.Token);
+                TrackUsage(narrationResp.Usage);
 
-                var result = state.ParseResponse(resp.Content);
+                if (!NarrationChoicesTextParser.TryParse(narrationResp.Content, out var narration, out var choices, out var effectTag, out var parseError))
+                {
+                    OnError?.Invoke("开场输出解析失败：" + parseError);
+                    return;
+                }
+
+                DialogueResult result;
+                if (ShouldRequestEffectsForOpening(effectTag))
+                {
+                    string effectsPrompt = PromptAssembler?.AssembleEffectsOnly(state.StateType, state.BuildOpeningAction(), narration) ?? "";
+                    var effectsResp = await CompleteEffectsOnly(effectsPrompt, messages, thisCts.Token);
+                    TrackUsageSilent(effectsResp.Usage);
+
+                    if (!LlmReply.TryParseEffectsOnly(effectsResp.Content, out var effectsReply, out var effectsError))
+                    {
+                        OnError?.Invoke("开场 effects 解析失败：" + effectsError);
+                        return;
+                    }
+
+                    result = state.BuildNarrationTextResult(narrationResp.Content, narration, choices, effectsReply);
+                }
+                else
+                {
+                    result = state.BuildNarrationTextResult(narrationResp.Content, narration, choices, null);
+                }
+
                 HandleResult(state, result);
             }
             catch (OperationCanceledException)
@@ -688,9 +713,9 @@ namespace ACLS.Authoring
                 History.Add(new ChatMessage(ChatRole.User, displayText));
 
             var swAssemble = System.Diagnostics.Stopwatch.StartNew();
-            string prompt = CurrentState.AssemblePrompt(userInput);
+            string narrationPrompt = PromptAssembler?.AssembleNarrationAndChoices(CurrentState.StateType, userInput) ?? "";
             swAssemble.Stop();
-            Log.Info(Log.Channels.Llm, "[Timing] Prompt组装: {0:F2}s, prompt长度={1}", swAssemble.Elapsed.TotalSeconds, prompt?.Length ?? 0);
+            Log.Info(Log.Channels.Llm, "[Timing] Prompt组装: {0:F2}s, prompt长度={1}", swAssemble.Elapsed.TotalSeconds, narrationPrompt?.Length ?? 0);
 
             SetBusy(true);
             var thisCts = CancellationTokenSource.CreateLinkedTokenSource(lifetimeCts.Token);
@@ -709,7 +734,7 @@ namespace ACLS.Authoring
                         Log.Warn(Log.Channels.Llm, "解析失败，第{0}次重试...", attempt);
                         extraMessages.Clear();
                         extraMessages.Add(new ChatMessage(ChatRole.User,
-                            "你刚才的回复格式不符合要求，请严格按照要求的 JSON 格式重新生成。不要包含任何 JSON 之外的文字。"));
+                            "你刚才的回复格式不符合要求。请输出纯文本叙事，正文后单独一行 ---，然后每行一个选项，格式为 1. 选项文本。不要任何额外解释。"));
                     }
 
                     var messages = History.Recent(RecentMessages);
@@ -717,29 +742,50 @@ namespace ACLS.Authoring
                         messages = messages.Concat(extraMessages).ToList();
 
                     var swStream = System.Diagnostics.Stopwatch.StartNew();
-                    var resp = await CompleteStreamWithTools(prompt, messages, thisCts.Token);
+                    var narrationResp = await CompleteNarrationAndChoicesStream(narrationPrompt, messages, thisCts.Token);
                     swStream.Stop();
-                    Log.Info(Log.Channels.Llm, "[Timing] 流式调用 (attempt={0}): {1:F2}s", attempt, swStream.Elapsed.TotalSeconds);
+                    TrackUsage(narrationResp.Usage);
+                    Log.Info(Log.Channels.Llm, "[Timing] 文本流式调用 (attempt={0}): {1:F2}s", attempt, swStream.Elapsed.TotalSeconds);
 
                     var swParse = System.Diagnostics.Stopwatch.StartNew();
-                    var result = CurrentState.ParseResponse(resp.Content);
+                    bool parsed = NarrationChoicesTextParser.TryParse(narrationResp.Content, out var narration, out var choices, out var effectTag, out var parseError);
                     swParse.Stop();
-                    Log.Info(Log.Channels.Llm, "[Timing] 响应解析: {0:F2}s, content长度={1}", swParse.Elapsed.TotalSeconds, resp.Content?.Length ?? 0);
+                    Log.Info(Log.Channels.Llm, "[Timing] 文本响应解析: {0:F2}s, content长度={1}", swParse.Elapsed.TotalSeconds, narrationResp.Content?.Length ?? 0);
 
-                    if (!result.IsError)
+                    if (!parsed)
                     {
-                        var swHandle = System.Diagnostics.Stopwatch.StartNew();
-                        HandleResult(CurrentState, result);
-                        swHandle.Stop();
-                        Log.Info(Log.Channels.Llm, "[Timing] HandleResult: {0:F2}s, 总耗时: {1:F2}s", swHandle.Elapsed.TotalSeconds, swTotal.Elapsed.TotalSeconds);
+                        if (attempt < MaxRetries)
+                            continue;
+
+                        OnError?.Invoke("叙事输出解析失败：" + parseError);
                         return;
                     }
 
-                    // 还有重试次数则继续，否则报错
-                    if (attempt < MaxRetries)
-                        continue;
+                    DialogueResult result;
+                    if (ShouldRequestEffectsForStagePlay(userInput, effectTag))
+                    {
+                        string effectsPrompt = PromptAssembler?.AssembleEffectsOnly(CurrentState.StateType, userInput, narration) ?? "";
+                        var effectsResp = await CompleteEffectsOnly(effectsPrompt, messages, thisCts.Token);
+                        TrackUsageSilent(effectsResp.Usage);
 
+                        if (!LlmReply.TryParseEffectsOnly(effectsResp.Content, out var effectsReply, out var effectsError))
+                        {
+                            OnError?.Invoke("effects 输出解析失败：" + effectsError);
+                            return;
+                        }
+
+                        result = BuildNarrationTextResult(narrationResp.Content, narration, choices, effectsReply);
+                    }
+                    else
+                    {
+                        result = BuildNarrationTextResult(narrationResp.Content, narration, choices, null);
+                    }
+
+                    var swHandle = System.Diagnostics.Stopwatch.StartNew();
                     HandleResult(CurrentState, result);
+                    swHandle.Stop();
+                    Log.Info(Log.Channels.Llm, "[Timing] HandleResult: {0:F2}s, 总耗时: {1:F2}s", swHandle.Elapsed.TotalSeconds, swTotal.Elapsed.TotalSeconds);
+                    return;
                 }
             }
             catch (OperationCanceledException)
@@ -798,6 +844,144 @@ namespace ACLS.Authoring
             return messages;
         }
 
+        private async Task<LlmResponse> CompleteNarrationAndChoicesStream(string prompt,
+            IReadOnlyList<ChatMessage> messages, CancellationToken ct)
+        {
+            SetThinking("");
+            OnStreamingBegin?.Invoke();
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            Log.Info(Log.Channels.Llm, "[Timing] TextStream START t={0:F3}s", Time.realtimeSinceStartup);
+
+            var raw = new StringBuilder();
+            string lastShownNarration = "";
+            messages = EnsureMessages(messages);
+
+            var resp = await LlmClient.CompleteStreamAsync(prompt, messages, delta =>
+            {
+                if (string.IsNullOrEmpty(delta)) return;
+                raw.Append(delta);
+                string narration = NarrationChoicesTextParser.ExtractNarrationForStreaming(raw.ToString());
+                if (narration != lastShownNarration)
+                {
+                    lastShownNarration = narration;
+                    if (PlayerLoopHelper.IsMainThread)
+                        OnNarrationDelta?.Invoke(narration);
+                    else
+                        UniTask.Post(() => OnNarrationDelta?.Invoke(narration));
+                }
+            }, ct);
+
+            sw.Stop();
+            lastResponseTime = (float)sw.Elapsed.TotalSeconds;
+            OnResponseTime?.Invoke(lastResponseTime);
+            string finalNarration = NarrationChoicesTextParser.ExtractNarrationForStreaming(raw.ToString());
+            if (finalNarration != lastShownNarration)
+            {
+                if (PlayerLoopHelper.IsMainThread)
+                    OnNarrationDelta?.Invoke(finalNarration);
+                else
+                    UniTask.Post(() => OnNarrationDelta?.Invoke(finalNarration));
+            }
+            OnStreamingEnd?.Invoke();
+            Log.Info(Log.Channels.Llm, "[Timing] TextStream END t={0:F3}s elapsed={1:F2}s rawLen={2}",
+                Time.realtimeSinceStartup, sw.Elapsed.TotalSeconds, raw.Length);
+            return resp;
+        }
+
+        private async Task<LlmResponse> CompleteEffectsOnly(string prompt,
+            IReadOnlyList<ChatMessage> messages, CancellationToken ct)
+        {
+            messages = EnsureMessages(messages);
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var resp = await LlmClient.CompleteAsync(prompt, messages, ct);
+            sw.Stop();
+            Log.Info(Log.Channels.Llm, "[Timing] EffectsOnly END elapsed={0:F2}s rawLen={1}", sw.Elapsed.TotalSeconds, resp?.Content?.Length ?? 0);
+            return resp;
+        }
+
+        private DialogueResult BuildNarrationTextResult(string rawResponse, string narration,
+            List<LlmReply.Choice> choices, LlmReply effectsReply)
+        {
+            var result = new DialogueResult
+            {
+                RawResponse = rawResponse,
+                Narration = narration ?? "",
+                Choices = choices ?? new List<LlmReply.Choice>(),
+                Thinking = "",
+                Participants = effectsReply?.System?.SceneParticipants ?? new List<LlmReply.Participant>(),
+                Effects = effectsReply?.System?.Effects ?? new List<LlmReply.EffectSpec>(),
+                SuggestedNextState = effectsReply?.System?.SuggestedState ?? "",
+                SkillTriggers = effectsReply?.System?.SkillTriggers ?? new List<string>(),
+                DaysPassed = effectsReply?.DaysPassed ?? 0,
+            };
+
+            if (!string.IsNullOrWhiteSpace(effectsReply?.Date))
+                result.Date = TryParseDateText(effectsReply.Date);
+
+            return result;
+        }
+
+        private static bool ShouldRequestEffectsForOpening(NarrationChoicesTextParser.EffectTagState effectTag)
+        {
+            return effectTag != NarrationChoicesTextParser.EffectTagState.No;
+        }
+
+        private static bool ShouldRequestEffectsForStagePlay(string userInput,
+            NarrationChoicesTextParser.EffectTagState effectTag)
+        {
+            bool localStrong = LocalEffectsHeuristic(userInput);
+
+            if (effectTag == NarrationChoicesTextParser.EffectTagState.Yes)
+                return true;
+            if (effectTag == NarrationChoicesTextParser.EffectTagState.No && !localStrong)
+                return false;
+            return localStrong;
+        }
+
+        private static bool LocalEffectsHeuristic(string userInput)
+        {
+            string text = (userInput ?? "").Trim();
+            if (text.Length == 0) return true;
+
+            string[] strongKeywords =
+            {
+                "去","前往","出发","赶往","进入","离开","回到","潜入","跟上","追过去",
+                "买","卖","给","拿","取","收下","交出","支付","赏","借","还",
+                "打","杀","砍","刺","推","抓","绑","逃","躲","冲","拦","救","医","疗伤",
+                "搜","查","翻","审","盘问","打听","偷听","观察","查看","检查","试探",
+                "说服","劝","威胁","挑衅","道歉","求助","结交","拉拢","拒绝","表态",
+                "等","休息","睡","过夜","明天","数日","赶路","停留",
+                "记下","记住","告诉","隐瞒","承认","答应","立誓","约定"
+            };
+
+            for (int i = 0; i < strongKeywords.Length; i++)
+            {
+                if (text.Contains(strongKeywords[i]))
+                    return true;
+            }
+
+            return text.Length >= 10;
+        }
+
+        private static Sim.GameDate? TryParseDateText(string s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return null;
+            try
+            {
+                var m = System.Text.RegularExpressions.Regex.Match(s.Trim(), @"(\d{1,4})年(\d{1,2})月(\d{1,2})日");
+                if (m.Success)
+                {
+                    int y = int.Parse(m.Groups[1].Value);
+                    int mo = int.Parse(m.Groups[2].Value);
+                    int d = int.Parse(m.Groups[3].Value);
+                    if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31)
+                        return new Sim.GameDate(y, mo, d);
+                }
+            }
+            catch { }
+            return null;
+        }
+
         private async Task<LlmResponse> CompleteStreamWithThinking(string prompt,
             IReadOnlyList<ChatMessage> messages, CancellationToken ct)
         {
@@ -832,7 +1016,7 @@ namespace ACLS.Authoring
                     // 不节流：每个 delta 立即推。LLM 一次调用 delta 总数有限（200-500），
                     // 推一次只赋值一个字符串，性能可接受。
                     lastNarrationEmit = now;
-                    Log.Info(Log.Channels.Llm, "[NarDelta] len={0} preview={1}", n.Length, Truncate(n, 80));
+                    //Log.Info(Log.Channels.Llm, "[NarDelta] len={0} preview={1}", n.Length, Truncate(n, 80));
                     if (PlayerLoopHelper.IsMainThread)
                         OnNarrationDelta?.Invoke(n);
                     else
@@ -846,6 +1030,7 @@ namespace ACLS.Authoring
 
             // ── 流结束后，发出最后一次完整 narration delta（确保打字机看到完整文本） ──
             EmitFinalNarrationDelta(raw);
+            OnStreamingEnd?.Invoke();
             Log.Info(Log.Channels.Llm, "[Timing] Stream END t={0:F3}s elapsed={1:F2}s rawLen={2}",
                 Time.realtimeSinceStartup, sw.Elapsed.TotalSeconds, raw.Length);
 
@@ -1176,6 +1361,12 @@ namespace ACLS.Authoring
             cumulativeUsage = cumulativeUsage + usage;
             callCount++;
             OnUsage?.Invoke(usage, cumulativeUsage);
+        }
+
+        private void TrackUsageSilent(LlmUsage usage)
+        {
+            cumulativeUsage = cumulativeUsage + usage;
+            callCount++;
         }
 
         private void SetBusy(bool v)

@@ -1,10 +1,10 @@
+using System.Collections;
 using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 using ACLS.Authoring;
 using ACLS.Llm;
-using ACLS.Logging;
 
 namespace ACLS.UI
 {
@@ -13,6 +13,7 @@ namespace ACLS.UI
         private const float StatusBarHeight = 28f;
         private const float InputRowHeight = 56f;
         private const float ChoicesRowHeight = 56f;
+        private const float MinBlockInterval = 0.5f;   // 两个 block 显示完成之间最小间隔
 
         private ChatBridge bridge;
         private RectTransform historyContent;
@@ -26,13 +27,15 @@ namespace ACLS.UI
         private RectTransform choicesContainer;
         private List<Button> choiceButtons = new List<Button>();
 
-        // ── 打字机槽 ──
+        // ── Block queue ──
+        private readonly Queue<ChatBlock> _pending = new Queue<ChatBlock>();
+        private ChatBlock _activeBlock;
         private TypewriterSlot _activeSlot;
-        private IReadOnlyList<LlmReply.Choice> _pendingChoices;
-        private bool _streamingMsgActive;
+        private float _lastDoneTime = float.NegativeInfinity;
+        private Coroutine _gapWaiter;
 
-        // ── 打字机池 ──
-        private List<TypewriterSlot> _slotPool = new List<TypewriterSlot>();
+        // ── Typewriter pool ──
+        private readonly List<TypewriterSlot> _slotPool = new List<TypewriterSlot>();
 
         public void Bind(ChatBridge bridge)
         {
@@ -42,22 +45,19 @@ namespace ACLS.UI
 
             if (bridge.History?.All != null)
                 foreach (var m in bridge.History.All)
-                    AppendMessage(m);
+                    PushBlock(ChatBlock.Static(m.Role, HeaderPrefixFor(m.Role), m.Content));
 
-            bridge.OnMessage += AppendMessage;
+            bridge.OnBlock += OnBlock;
             bridge.OnBusyChanged += OnBusyChanged;
             bridge.OnChoicesChanged += RefreshChoices;
             bridge.OnThinkingChanged += UpdateThinking;
-            bridge.OnMessageDelta += OnMessageDelta;
-            bridge.OnSystemMessage += OnSystemMessage;
-            bridge.OnStreamingBegin += OnStreamingBegin;
-            bridge.OnStreamingEnd += OnStreamingEnd;
 
             if (!bridge.Ready)
             {
-                AppendSystemNotice(string.IsNullOrEmpty(bridge.ConfigError)
-                    ? "未找到 LlmConfig。请到 Assets/Resources/ 下创建 ACLS/LLM Config 资产并填 ApiKey。"
-                    : bridge.ConfigError);
+                PushBlock(ChatBlock.Static(ChatRole.System, "系统",
+                    string.IsNullOrEmpty(bridge.ConfigError)
+                        ? "未找到 LlmConfig。请到 Assets/Resources/ 下创建 ACLS/LLM Config 资产并填 ApiKey。"
+                        : bridge.ConfigError));
                 SetInteractable(false);
             }
 
@@ -68,25 +68,22 @@ namespace ACLS.UI
 
         private void OnDestroy()
         {
-            // 清理打字机池（销毁 GameObject 会自动停掉协程，无需显式 FinishNow）
+            if (_gapWaiter != null) { StopCoroutine(_gapWaiter); _gapWaiter = null; }
             for (int i = _slotPool.Count - 1; i >= 0; i--)
             {
-                if (_slotPool[i] != null)
-                    Destroy(_slotPool[i].gameObject);
+                if (_slotPool[i] != null) Destroy(_slotPool[i].gameObject);
             }
             _slotPool.Clear();
+            _activeBlock = null;
             _activeSlot = null;
+            _pending.Clear();
 
             if (bridge != null)
             {
-                bridge.OnMessage -= AppendMessage;
+                bridge.OnBlock -= OnBlock;
                 bridge.OnBusyChanged -= OnBusyChanged;
                 bridge.OnChoicesChanged -= RefreshChoices;
                 bridge.OnThinkingChanged -= UpdateThinking;
-                bridge.OnMessageDelta -= OnMessageDelta;
-                bridge.OnSystemMessage -= OnSystemMessage;
-                bridge.OnStreamingBegin -= OnStreamingBegin;
-                bridge.OnStreamingEnd -= OnStreamingEnd;
             }
         }
 
@@ -134,10 +131,7 @@ namespace ACLS.UI
         private void BuildHistory(Transform parent)
         {
             var scrollGo = new GameObject("History",
-                typeof(RectTransform),
-                typeof(CanvasRenderer),
-                typeof(Image),
-                typeof(ScrollRect));
+                typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(ScrollRect));
             scrollGo.transform.SetParent(parent, false);
             var scrollRt = (RectTransform)scrollGo.transform;
             scrollRt.anchorMin = new Vector2(0, 0);
@@ -153,10 +147,7 @@ namespace ACLS.UI
             scroll.scrollSensitivity = 30f;
 
             var vpGo = new GameObject("Viewport",
-                typeof(RectTransform),
-                typeof(CanvasRenderer),
-                typeof(Image),
-                typeof(Mask));
+                typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Mask));
             vpGo.transform.SetParent(scrollGo.transform, false);
             var vpRt = (RectTransform)vpGo.transform;
             vpRt.anchorMin = Vector2.zero;
@@ -168,9 +159,7 @@ namespace ACLS.UI
             scroll.viewport = vpRt;
 
             var contentGo = new GameObject("Content",
-                typeof(RectTransform),
-                typeof(VerticalLayoutGroup),
-                typeof(ContentSizeFitter));
+                typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
             contentGo.transform.SetParent(vpGo.transform, false);
             historyContent = (RectTransform)contentGo.transform;
             historyContent.anchorMin = new Vector2(0, 1);
@@ -208,9 +197,7 @@ namespace ACLS.UI
 
         private void BuildChoicesRow(Transform parent)
         {
-            var rowGo = new GameObject("Choices",
-                typeof(RectTransform),
-                typeof(HorizontalLayoutGroup));
+            var rowGo = new GameObject("Choices", typeof(RectTransform), typeof(HorizontalLayoutGroup));
             rowGo.transform.SetParent(parent, false);
             choicesContainer = (RectTransform)rowGo.transform;
             choicesContainer.anchorMin = new Vector2(0, 0);
@@ -231,30 +218,24 @@ namespace ACLS.UI
 
         private void RefreshChoices(IReadOnlyList<LlmReply.Choice> choices)
         {
-            // ── 打字机播放中：缓冲，不立即显示 ──
+            // 在打字机期间 buffer 住 choices，等 active block 完成后在 OnSlotDone 里消费
             if (_activeSlot != null && !_activeSlot.IsDone)
             {
-                _pendingChoices = choices;
+                _pendingChoicesToShow = choices;
                 return;
             }
-
             ApplyChoices(choices);
         }
 
-        private void OnSlotDone(TypewriterSlot slot)
-        {
-            if (_activeSlot == slot) _activeSlot = null;
-            slot.OnDone -= OnSlotDone;
-            ReturnSlot(slot);
+        private IReadOnlyList<LlmReply.Choice> _pendingChoicesToShow;
 
-            // 刷新缓冲的 choices
-            if (_pendingChoices != null)
-            {
-                var toShow = _pendingChoices;
-                _pendingChoices = null;
-                ApplyChoices(toShow);
-            }
-            ScrollToBottom();
+        private void OnBusyChanged(bool busy)
+        {
+            SetInteractable(!busy && bridge.Ready);
+            sendBtn.gameObject.SetActive(!busy);
+            cancelBtn.gameObject.SetActive(busy);
+            UpdateStatusLabel();
+            if (!busy) input.ActivateInputField();
         }
 
         private void ApplyChoices(IReadOnlyList<LlmReply.Choice> choices)
@@ -294,7 +275,7 @@ namespace ACLS.UI
             rowRt.offsetMin = new Vector2(8, 8);
             rowRt.offsetMax = new Vector2(-8, InputRowHeight);
 
-            input = MakeTmpInput(rowGo.transform, "Input", "输入你的行动……", charLimit: 240);
+            input = MakeTmpInput(rowGo.transform, "Input", "输入你的行动…��", charLimit: 240);
             var inputRt = (RectTransform)input.transform;
             inputRt.anchorMin = new Vector2(0, 0);
             inputRt.anchorMax = new Vector2(1, 1);
@@ -336,10 +317,7 @@ namespace ACLS.UI
             title.text = "THINKING";
 
             var scrollGo = new GameObject("ThinkingScroll",
-                typeof(RectTransform),
-                typeof(CanvasRenderer),
-                typeof(Image),
-                typeof(ScrollRect));
+                typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(ScrollRect));
             scrollGo.transform.SetParent(parent, false);
             var scrollRt = (RectTransform)scrollGo.transform;
             scrollRt.anchorMin = new Vector2(0, 0);
@@ -355,10 +333,7 @@ namespace ACLS.UI
             thinkingScroll.scrollSensitivity = 30f;
 
             var vpGo = new GameObject("Viewport",
-                typeof(RectTransform),
-                typeof(CanvasRenderer),
-                typeof(Image),
-                typeof(Mask));
+                typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Mask));
             vpGo.transform.SetParent(scrollGo.transform, false);
             var vpRt = (RectTransform)vpGo.transform;
             vpRt.anchorMin = Vector2.zero;
@@ -370,9 +345,7 @@ namespace ACLS.UI
             thinkingScroll.viewport = vpRt;
 
             var contentGo = new GameObject("Content",
-                typeof(RectTransform),
-                typeof(VerticalLayoutGroup),
-                typeof(ContentSizeFitter));
+                typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
             contentGo.transform.SetParent(vpGo.transform, false);
             var contentRt = (RectTransform)contentGo.transform;
             contentRt.anchorMin = new Vector2(0, 1);
@@ -396,10 +369,7 @@ namespace ACLS.UI
             csf.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
             var textGo = new GameObject("Text",
-                typeof(RectTransform),
-                typeof(CanvasRenderer),
-                typeof(TextMeshProUGUI),
-                typeof(ContentSizeFitter));
+                typeof(RectTransform), typeof(CanvasRenderer), typeof(TextMeshProUGUI), typeof(ContentSizeFitter));
             textGo.transform.SetParent(contentGo.transform, false);
             thinkingLabel = textGo.GetComponent<TextMeshProUGUI>();
             thinkingLabel.font = UiKit.TmpFont;
@@ -435,99 +405,6 @@ namespace ACLS.UI
             foreach (var b in choiceButtons) b.interactable = on;
         }
 
-        private void AppendMessage(ChatMessage m)
-        {
-            bool isAssistant = m.Role == ChatRole.Assistant;
-
-            // ── 流式旁白结束：Flush 打字机（Msg TMP 在 OnStreamingBegin 已创建） ──
-            if (isAssistant && _activeSlot != null && !_activeSlot.IsDone)
-            {
-                if (bridge != null) AppendMetaItem(bridge.LastUsage, bridge.CumulativeUsage);
-                // 用最终内容再喂一次（兜底覆盖最后几个字符的解析修正），然后 Flush
-                _activeSlot.Feed(Escape(m.Content));
-                Log.Info(Log.Channels.UI, "[Typewriter] AppendMessage Flush: contentLen={0}", m.Content?.Length ?? 0);
-                _activeSlot.Flush();
-                return;
-            }
-
-            // ── 静态消息 ──
-            string prefix = isAssistant
-                ? "<color=#f5d57a><b>旁白</b></color>"
-                : m.Role switch
-                {
-                    ChatRole.User => "<color=#7fb6ff><b>你</b></color>",
-                    ChatRole.System => "<color=#ff8888><b>系统</b></color>",
-                    _ => "",
-                };
-
-            // 打字机已在 OnStreamingBegin 创建了 Msg TMP，跳过重复创建
-            if (!(isAssistant && _streamingMsgActive))
-            {
-                var lineText = $"{prefix} {Timestamp()}\n{Escape(m.Content)}";
-                CreateMessageItem(lineText);
-            }
-            _streamingMsgActive = false;
-
-            // 独立 meta 行：assistant 消息附加 token 用量
-            if (isAssistant && bridge != null)
-                AppendMetaItem(bridge.LastUsage, bridge.CumulativeUsage);
-
-            ScrollToBottom();
-        }
-
-        private void AppendMetaItem(LlmUsage last, LlmUsage cumulative)
-        {
-            if (!last.HasData) return;
-            string rt = bridge != null && bridge.LastResponseTime > 0f
-                ? $" · {bridge.LastResponseTime:F1}s"
-                : "";
-            string metaText = $"<size=14><color=#555555><align=right>in {last.InputTokens} · out {last.OutputTokens} · ∑{cumulative.Total}{rt}</align></color></size>";
-            CreateMessageItem(metaText);
-        }
-
-        private void AppendSystemNotice(string text)
-        {
-            CreateMessageItem($"<color=#ff8888><b>系统</b></color> {Timestamp()}\n<color=#888888>· {Escape(text)}</color>");
-            ScrollToBottom();
-        }
-
-        private TextMeshProUGUI CreateMessageItem(string richText)
-        {
-            var go = new GameObject("Msg",
-                typeof(RectTransform),
-                typeof(CanvasRenderer),
-                typeof(TextMeshProUGUI),
-                typeof(ContentSizeFitter));
-            go.transform.SetParent(historyContent, false);
-
-            var t = go.GetComponent<TextMeshProUGUI>();
-            t.font = UiKit.TmpFont;
-            t.fontSize = 19;
-            t.color = Color.white;
-            t.alignment = TextAlignmentOptions.TopLeft;
-            t.richText = true;
-            t.enableWordWrapping = true;
-            t.overflowMode = TextOverflowModes.Overflow;
-            t.text = richText;
-
-            var csf = go.GetComponent<ContentSizeFitter>();
-            csf.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
-            csf.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-
-            return t;
-        }
-
-        private void OnBusyChanged(bool busy)
-        {
-            // 不再在这里 FinishNow()：打字机只管自己的节奏，由协程内部完成。
-            // Busy 状态只影响 UI 交互（按钮/输入框可用性），不影响打字动画。
-            SetInteractable(!busy && bridge.Ready);
-            sendBtn.gameObject.SetActive(!busy);
-            cancelBtn.gameObject.SetActive(busy);
-            UpdateStatusLabel();
-            if (!busy) input.ActivateInputField();
-        }
-
         private void OnCancelClicked()
         {
             if (bridge == null || !bridge.Busy) return;
@@ -556,53 +433,169 @@ namespace ACLS.UI
         private void UpdateThinking(string text)
         {
             if (thinkingLabel == null) return;
-            thinkingLabel.text = Escape(text);
+            thinkingLabel.text = text ?? "";
             ScrollThinkingToBottom();
         }
 
-        private static string Timestamp() =>
-            $"<color=#cccccc><size=12>{System.DateTime.Now:HH:mm:ss}</size></color>";
+        // ── Block pipeline ──
 
-        private void OnStreamingBegin()
+        private void OnBlock(ChatBlock block)
         {
-            _pendingChoices = null;
-            _streamingMsgActive = false;  // 清理上一轮残留标记
+            // Re-tick of the active block (data changed) — typewriter's coroutine
+            // polls the block each frame, so no action needed here.
+            if (block == _activeBlock) return;
 
-            // 不打断旧打字机：让它自己跑完。旧 slot 绑定的是上一个 Msg TMP，
-            // 新流用新 Msg TMP + 新 slot 即可。两个打字机完全独立运行。
+            // Active block exists — queue this one behind it
+            if (_activeBlock != null)
+            {
+                _pending.Enqueue(block);
+                return;
+            }
 
-            string header = $"<color=#f5d57a><b>旁白</b></color> {Timestamp()}";
-
-            // 创建永久 Msg TMP（留在 historyContent 中不被回收）
-            var tmp = CreateMessageItem(header + "\n");
-            _streamingMsgActive = true;
-
-            // 从池中取打字机控制器（若旧 slot 已完成并回池则复用）
-            var slot = RentSlot();
-            slot.Assign(tmp, header);
-            slot.OnDone += OnSlotDone;
-            _activeSlot = slot;
+            // No active block — check min interval from last done
+            TryStartBlock(block);
         }
 
-        private void OnMessageDelta(string partialNarration)
+        private void TryStartBlock(ChatBlock block)
         {
-            if (_activeSlot == null || _activeSlot.IsDone) return;
-            string escaped = Escape(partialNarration);
-            Log.Info(Log.Channels.UI, "[Typewriter] Feed: inLen={0} escapedLen={1}", partialNarration?.Length ?? 0, escaped.Length);
-            _activeSlot.Feed(escaped);
+            float elapsed = Time.unscaledTime - _lastDoneTime;
+            float gap = MinBlockInterval - elapsed;
+            if (gap > 0)
+            {
+                if (_gapWaiter != null) StopCoroutine(_gapWaiter);
+                _gapWaiter = StartCoroutine(StartAfterGap(gap, block));
+                return;
+            }
+            DoStartBlock(block);
+        }
+
+        private IEnumerator StartAfterGap(float delay, ChatBlock block)
+        {
+            yield return new WaitForSecondsRealtime(delay);
+            _gapWaiter = null;
+            // Re-check: maybe another block started in the meantime
+            if (_activeBlock == null)
+                DoStartBlock(block);
+        }
+
+        private void DoStartBlock(ChatBlock block)
+        {
+            string header = FormatHeader(block);
+            var tmp = CreateMessageItem(header + "\n");
+
+            if (!block.IsStreaming)
+            {
+                // Static: 直接写入整段文本,无打字机
+                tmp.text = header + "\n" + block.StaticText;
+                // 静态 block 视为立即完成 — 走 OnBlockDone 走完队列/间隔
+                StartCoroutine(StaticBlockDoneNextFrame(block));
+                return;
+            }
+
+            // Streaming: 取一个打字机槽
+            var slot = RentSlot();
+            slot.Assign(tmp, header, block);
+            slot.OnDone += OnSlotDone;
+            _activeBlock = block;
+            _activeSlot = slot;
             ScrollToBottom();
         }
 
-        // ── 打字机池 ──
+        private IEnumerator StaticBlockDoneNextFrame(ChatBlock block)
+        {
+            _activeBlock = block;
+            yield return null;
+            OnBlockFinished();
+        }
+
+        private void OnSlotDone(TypewriterSlot slot)
+        {
+            slot.OnDone -= OnSlotDone;
+            ReturnSlot(slot);
+            OnBlockFinished();
+        }
+
+        private void OnBlockFinished()
+        {
+            _activeBlock = null;
+            _activeSlot = null;
+            _lastDoneTime = Time.unscaledTime;
+            ScrollToBottom();
+
+            // Flush buffered choices if any arrived during the active block
+            if (_pendingChoicesToShow != null)
+            {
+                var toShow = _pendingChoicesToShow;
+                _pendingChoicesToShow = null;
+                ApplyChoices(toShow);
+            }
+
+            if (_pending.Count > 0)
+                TryStartBlock(_pending.Dequeue());
+        }
+
+        // ── Header formatting ──
+
+        private static string HeaderPrefixFor(ChatRole role) => role switch
+        {
+            ChatRole.Assistant => "旁白",
+            ChatRole.User => "你",
+            ChatRole.System => "系统",
+            _ => "",
+        };
+
+        private string FormatHeader(ChatBlock block)
+        {
+            string prefix = ColorizePrefix(block.HeaderPrefix, block.Role);
+            string ts = $"<color=#cccccc><size=12>{block.Timestamp:HH:mm:ss}</size></color>";
+            return $"{prefix} {ts}";
+        }
+
+        private static string ColorizePrefix(string prefix, ChatRole role)
+        {
+            if (string.IsNullOrEmpty(prefix)) return "";
+            return role switch
+            {
+                ChatRole.Assistant => $"<color=#f5d57a><b>{prefix}</b></color>",
+                ChatRole.User => $"<color=#7fb6ff><b>{prefix}</b></color>",
+                ChatRole.System => $"<color=#ff8888><b>{prefix}</b></color>",
+                _ => prefix,
+            };
+        }
+
+        // ── TMP item creation ──
+
+        private TextMeshProUGUI CreateMessageItem(string richText)
+        {
+            var go = new GameObject("Msg",
+                typeof(RectTransform), typeof(CanvasRenderer), typeof(TextMeshProUGUI), typeof(ContentSizeFitter));
+            go.transform.SetParent(historyContent, false);
+
+            var t = go.GetComponent<TextMeshProUGUI>();
+            t.font = UiKit.TmpFont;
+            t.fontSize = 19;
+            t.color = Color.white;
+            t.alignment = TextAlignmentOptions.TopLeft;
+            t.richText = true;
+            t.enableWordWrapping = true;
+            t.overflowMode = TextOverflowModes.Overflow;
+            t.text = richText;
+
+            var csf = go.GetComponent<ContentSizeFitter>();
+            csf.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+            csf.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            return t;
+        }
+
+        // ── Typewriter pool ──
 
         private TypewriterSlot RentSlot()
         {
             foreach (var s in _slotPool)
             {
-                if (!s.gameObject.activeInHierarchy)
-                    return s;
+                if (!s.gameObject.activeInHierarchy) return s;
             }
-
             var go = new GameObject("TypewriterSlot", typeof(TypewriterSlot));
             go.transform.SetParent(transform, false);
             go.SetActive(false);
@@ -616,25 +609,17 @@ namespace ACLS.UI
             slot.gameObject.SetActive(false);
         }
 
-        // ── 流结束：提前 Flush，不等 AppendMessage ──
+        // ── PushBlock is for history replay only (Bind-time) ──
 
-        private void OnStreamingEnd()
+        private void PushBlock(ChatBlock block)
         {
-            if (_activeSlot != null && !_activeSlot.IsDone)
-            {
-                int currentLen = _activeSlot.GetShownCount();
-                int targetLen = _activeSlot.GetTargetLen();
-                Log.Info(Log.Channels.UI, "[Typewriter] OnStreamingEnd: shown={0} targetLen={1} remaining={2}",
-                    currentLen, targetLen, targetLen - currentLen);
-                _activeSlot.Flush();
-            }
-        }
-
-        private void OnSystemMessage(string message)
-        {
-            CreateMessageItem($"<color=#5bc0be><b>系统</b></color>\n<color=#b0b0c0>{Escape(message)}</color>");
+            // History replay: 直接生成完整 Msg TMP,不进队列不打字机
+            string header = FormatHeader(block);
+            CreateMessageItem(header + "\n" + (block.StaticText ?? ""));
             ScrollToBottom();
         }
+
+        // ── Scrolling ──
 
         private void ScrollThinkingToBottom()
         {
@@ -642,7 +627,7 @@ namespace ACLS.UI
             StartCoroutine(ScrollThinkingNextFrame());
         }
 
-        private System.Collections.IEnumerator ScrollThinkingNextFrame()
+        private IEnumerator ScrollThinkingNextFrame()
         {
             yield return null;
             Canvas.ForceUpdateCanvases();
@@ -654,26 +639,19 @@ namespace ACLS.UI
             StartCoroutine(ScrollNextFrame());
         }
 
-        private System.Collections.IEnumerator ScrollNextFrame()
+        private IEnumerator ScrollNextFrame()
         {
             yield return null;
             Canvas.ForceUpdateCanvases();
             scroll.verticalNormalizedPosition = 0f;
         }
 
-        private static string Escape(string s)
-        {
-            return string.IsNullOrEmpty(s) ? "" : s.Replace("<", "＜").Replace(">", "＞");
-        }
+        // ── TMP_InputField builder (unchanged) ──
 
-        // Builds a TMP_InputField with TextArea + Placeholder + Text children.
         internal static TMP_InputField MakeTmpInput(Transform parent, string name, string placeholder, int charLimit)
         {
             var go = new GameObject(name,
-                typeof(RectTransform),
-                typeof(CanvasRenderer),
-                typeof(Image),
-                typeof(TMP_InputField));
+                typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(TMP_InputField));
             go.transform.SetParent(parent, false);
             go.GetComponent<Image>().color = new Color(0.06f, 0.06f, 0.10f, 1f);
 

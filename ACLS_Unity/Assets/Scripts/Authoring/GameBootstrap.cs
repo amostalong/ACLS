@@ -12,7 +12,6 @@ namespace ACLS.Authoring
     public sealed class GameBootstrap : MonoBehaviour
     {
         private World world;
-        private GameClockDriver clock;
         private EventDispatcher dispatcher;
         private ChatBridge chat;
         private GameStateMachine stateMachine;
@@ -81,9 +80,6 @@ namespace ACLS.Authoring
             }
 
             // 5. 共用基础设施
-            clock = gameObject.AddComponent<GameClockDriver>();
-            clock.Bind(world);
-
             dispatcher = gameObject.AddComponent<EventDispatcher>();
             dispatcher.Bind(world);
 
@@ -98,7 +94,7 @@ namespace ACLS.Authoring
             chat.StateMachine = stateMachine;
 
             // 7. UI
-            UiBuilder.Build(world, clock, chat, stateMachine);
+            UiBuilder.Build(world, chat, stateMachine);
 
             // 8. 跳转到正确的状态
             if (hasSave)

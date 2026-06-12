@@ -16,16 +16,21 @@ namespace ACLS.Authoring
             this.preset = preset;
         }
 
-        public override string AssemblePrompt(string userInput = null)
+        public string BuildOpeningAction()
         {
             var player = Orchestrator?.World?.Player;
             string bg = player != null && !string.IsNullOrWhiteSpace(player.BackgroundStory)
                 ? $"\n[角色详细背景]：{player.BackgroundStory}"
                 : "";
-            string action =
+            return
                 "[开场] 玩家已选定身份。\n" +
                 $"[背景]：{preset?.Blurb}{bg}\n" +
                 "请按当前世界状态描写主角的第一次登场场景，并给出 1-4 个开局选项。";
+        }
+
+        public override string AssemblePrompt(string userInput = null)
+        {
+            string action = string.IsNullOrWhiteSpace(userInput) ? BuildOpeningAction() : userInput;
             return Orchestrator?.PromptAssembler?.Assemble(StateType, action) ?? "";
         }
 
@@ -38,6 +43,28 @@ namespace ACLS.Authoring
         public override DialogueStateType? GetNextState(DialogueResult result)
         {
             return DialogueStateType.StagePlay;
+        }
+
+        public DialogueResult BuildNarrationTextResult(string rawResponse, string narration,
+            List<LlmReply.Choice> choices, LlmReply effectsReply)
+        {
+            var result = new DialogueResult
+            {
+                RawResponse = rawResponse,
+                Narration = narration ?? "",
+                Thinking = "",
+                Choices = choices ?? new List<LlmReply.Choice>(),
+                Participants = effectsReply?.System?.SceneParticipants ?? new List<LlmReply.Participant>(),
+                Effects = effectsReply?.System?.Effects ?? new List<LlmReply.EffectSpec>(),
+                SuggestedNextState = effectsReply?.System?.SuggestedState ?? "",
+                SkillTriggers = effectsReply?.System?.SkillTriggers ?? new List<string>(),
+                DaysPassed = effectsReply?.DaysPassed ?? 0,
+            };
+
+            if (!string.IsNullOrWhiteSpace(effectsReply?.Date))
+                result.Date = TryParseDate(effectsReply.Date);
+
+            return result;
         }
 
         // Shared helper for all narrative states.

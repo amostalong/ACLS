@@ -6,6 +6,7 @@ using ACLS.Data;
 using ACLS.Llm;
 using ACLS.Sim;
 using ACLS.Logging;
+using Newtonsoft.Json;
 
 namespace ACLS.Authoring
 {
@@ -51,6 +52,7 @@ namespace ACLS.Authoring
         public event Action<string> OnSystemMessage;
         public event Action OnStreamingBegin;
         public event Action OnStreamingEnd;
+        public event Action<UI.ChatBlock> OnBlock;                 // unified displayable block (Static or Streaming)
 
         private World world;
         private ILlmClient llm;
@@ -59,6 +61,7 @@ namespace ACLS.Authoring
 
         private List<LlmReply.Choice> currentChoices = new List<LlmReply.Choice>();
         private List<LlmReply.Participant> currentParticipants = new List<LlmReply.Participant>();
+        private UI.ChatBlock _currentStreamBlock;
 
         public void Bind(World world, ILlmClient llm, LlmPromptConfig promptConfig, string configErrorIfAny)
         {
@@ -84,25 +87,47 @@ namespace ACLS.Authoring
             {
                 var msg = new ChatMessage(ChatRole.Assistant, narration);
                 OnMessage?.Invoke(msg);
+                // Assistant narration also fires via the streaming flow above;
+                // OnStreamingEnd is what finalizes the block, so we don't push
+                // a duplicate block here.
             };
 
             orchestrator.OnNarrationDelta += narration =>
             {
                 OnMessageDelta?.Invoke(narration);
+                if (_currentStreamBlock != null)
+                {
+                    _currentStreamBlock.CurrentStreamText = narration ?? "";
+                    OnBlock?.Invoke(_currentStreamBlock);   // re-fire as a data tick
+                }
             };
 
             orchestrator.OnSystemDelta += message =>
             {
                 OnSystemMessage?.Invoke(message);
+                // System status: streaming block with immediate flush so the
+                // typewriter types it out then is done.
+                var b = UI.ChatBlock.Streaming(ChatRole.System, "系统");
+                b.CurrentStreamText = message ?? "";
+                b.StreamFlushed = true;
+                OnBlock?.Invoke(b);
             };
 
             orchestrator.OnStreamingBegin += () =>
             {
+                _currentStreamBlock = UI.ChatBlock.Streaming(ChatRole.Assistant, "旁白");
+                OnBlock?.Invoke(_currentStreamBlock);
                 OnStreamingBegin?.Invoke();
             };
 
             orchestrator.OnStreamingEnd += () =>
             {
+                if (_currentStreamBlock != null)
+                {
+                    _currentStreamBlock.StreamFlushed = true;
+                    OnBlock?.Invoke(_currentStreamBlock);   // final tick
+                    _currentStreamBlock = null;
+                }
                 OnStreamingEnd?.Invoke();
             };
 
@@ -123,6 +148,14 @@ namespace ACLS.Authoring
                 LastUsage = last;
                 CumulativeUsage = cumulative;
                 OnUsageReported?.Invoke(last, cumulative);
+                // Push a meta block (token usage) right after the assistant's
+                // streaming block. View queues it behind the active typewriter.
+                if (last.HasData)
+                {
+                    string rt = LastResponseTime > 0f ? $" · {LastResponseTime:F1}s" : "";
+                    string metaText = $"<size=14><color=#555555><align=right>in {last.InputTokens} · out {last.OutputTokens} · ∑{cumulative.Total}{rt}</align></color></size>";
+                    OnBlock?.Invoke(UI.ChatBlock.Static(ChatRole.System, "", metaText));
+                }
             };
 
             orchestrator.OnResponseTime += seconds =>
@@ -142,6 +175,7 @@ namespace ACLS.Authoring
             {
                 var msg = new ChatMessage(ChatRole.System, "[错误] " + error);
                 OnMessage?.Invoke(msg);
+                OnBlock?.Invoke(UI.ChatBlock.Static(ChatRole.System, "系统", "[错误] " + error));
             };
 
             // Keep GameStateMachine sub-state in sync with the dialogue state machine.
@@ -155,6 +189,14 @@ namespace ACLS.Authoring
 
         public void CancelCurrent()
         {
+            // Unstick any in-flight typewriter block — the orchestrator's
+            // OnStreamingEnd won't fire on cancellation.
+            if (_currentStreamBlock != null)
+            {
+                _currentStreamBlock.StreamFlushed = true;
+                OnBlock?.Invoke(_currentStreamBlock);
+                _currentStreamBlock = null;
+            }
             orchestrator?.CancelCurrent();
         }
 
@@ -180,17 +222,14 @@ namespace ACLS.Authoring
 
             // 1. Show player's choice as "你" message.
             OnMessage?.Invoke(new ChatMessage(ChatRole.User, choice.Label));
+            OnBlock?.Invoke(UI.ChatBlock.Static(ChatRole.User, "你", choice.Label ?? ""));
 
-            // 2. Show outcome narration instantly (player-visible, not in History).
-            OnMessage?.Invoke(new ChatMessage(ChatRole.Assistant, choice.OutcomeNarration));
+            // 2. Outcome narration / effects no longer come from the choice itself.
+            //    The next narrative turn will describe consequences, and a
+            //    second effects-only LLM call will update local data.
 
-            // 3. Apply effects and advance time (world-side mutation).
-            ApplyEffects(choice);
-            AdvanceTime(choice.DaysPassed);
-
-            // 4. Next LLM turn. The outcome is embedded so the LLM can
-            //    continue the narrative while preserving user/assistant alternation.
-            string action = $"[玩家选择：{choice.Label}]\n[上一幕后果]：{choice.OutcomeNarration}\n请承接上文，描写下一幕，并给出 3-4 个新选项。";
+            // 3. Next LLM turn.
+            string action = $"[玩家选择：{choice.Label}]\n请承接上文，描写下一幕，并给出 1-4 个新选项。";
             orchestrator?.SendAction(action, displayText: choice.Label);
         }
 
@@ -233,6 +272,76 @@ namespace ACLS.Authoring
             orchestrator?.StartOpening(preset);
         }
 
+        // 快速根据角色背景调 LLM 取一个贴背景的中文姓名+字。失败回调 name=null。
+        // 独立于 WorldPipeline，不影响主流程 busy 状态。
+        public void GenerateNameFromBlurb(string charBlurb, string era, string locationName,
+                                          Action<string> onName, Action<string> onCourtesy,
+                                          Action<string> onError)
+        {
+            if (llm == null) { onError?.Invoke("llm not ready"); return; }
+            string blurb = (charBlurb ?? "").Trim();
+            if (blurb.Length == 0) { onError?.Invoke("empty blurb"); return; }
+
+            string sys = "你是一个中文起名助手。根据用户提供的角色背景，输出一个符合时代与身份的中文姓名（姓+名，1-2 字名）和字（1 字）。严格只返回 JSON：{\"name\":\"\",\"courtesy\":\"\"}。不要任何解释。";
+            string usr =
+                $"时代：{(string.IsNullOrEmpty(era) ? "未知" : era)}\n" +
+                $"出身地：{(string.IsNullOrEmpty(locationName) ? "未知" : locationName)}\n" +
+                $"角色背景：{blurb}\n\n" +
+                "请给该角色起一个贴背景的中文姓名（含姓）和字。";
+
+            // 独立 CancellationToken，避免主流程 cts 被影响
+            var localCts = new CancellationTokenSource();
+            _ = GenerateNameAsync(sys, usr, localCts.Token, onName, onCourtesy, onError);
+        }
+
+        private async System.Threading.Tasks.Task GenerateNameAsync(
+            string sys, string usr, CancellationToken ct,
+            Action<string> onName, Action<string> onCourtesy, Action<string> onError)
+        {
+            try
+            {
+                var messages = new List<ChatMessage> { new ChatMessage(ChatRole.User, usr) };
+                var resp = await llm.CompleteAsync(sys, messages, ct);
+                string text = resp?.Content ?? "";
+
+                // 提取 JSON（容忍 ```json 围栏、前后杂文）
+                string json = ExtractFirstJsonObject(text);
+                if (string.IsNullOrEmpty(json)) { onError?.Invoke("no json in response"); return; }
+
+                var obj = JsonConvert.DeserializeObject<Dictionary<string, string>>(json);
+                if (obj == null) { onError?.Invoke("json parse failed"); return; }
+
+                string name = obj.TryGetValue("name", out var n) ? (n ?? "").Trim() : "";
+                string court = obj.TryGetValue("courtesy", out var c) ? (c ?? "").Trim() : "";
+                if (name.Length == 0) { onError?.Invoke("empty name"); return; }
+
+                onName?.Invoke(name);
+                onCourtesy?.Invoke(court);
+            }
+            catch (System.Exception ex)
+            {
+                onError?.Invoke(ex.Message);
+            }
+        }
+
+        private static string ExtractFirstJsonObject(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return null;
+            int open = text.IndexOf('{');
+            if (open < 0) return null;
+            int depth = 0;
+            for (int i = open; i < text.Length; i++)
+            {
+                if (text[i] == '{') depth++;
+                else if (text[i] == '}')
+                {
+                    depth--;
+                    if (depth == 0) return text.Substring(open, i - open + 1);
+                }
+            }
+            return null;
+        }
+
         // Player typed into the input field.
         public void SubmitFreeform(string text)
         {
@@ -243,6 +352,7 @@ namespace ACLS.Authoring
 
             // Show human-readable text in the chat panel.
             OnMessage?.Invoke(new ChatMessage(ChatRole.User, text));
+            OnBlock?.Invoke(UI.ChatBlock.Static(ChatRole.User, "你", text));
 
             string action = $"[玩家自由行动：{text}] 请承接上文，描写下一幕，并给出 1-4 个新选项。";
             orchestrator?.SendAction(action, displayText: text);

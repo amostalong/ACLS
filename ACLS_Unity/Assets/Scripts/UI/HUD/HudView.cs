@@ -11,16 +11,14 @@ namespace ACLS.UI
     public sealed class HudView : MonoBehaviour
     {
         private World world;
-        private GameClockDriver clock;
         private ChatBridge chat;
         private DebugPanelView debugPanel;
         private TextMeshProUGUI dateLabel;
         private TextMeshProUGUI statusLabel;
 
-        public void Bind(World world, GameClockDriver clock, ChatBridge chat)
+        public void Bind(World world, ChatBridge chat)
         {
             this.world = world;
-            this.clock = clock;
             this.chat = chat;
 
             var bg = UiKit.CreatePanel(transform, "Bg",
@@ -43,7 +41,7 @@ namespace ACLS.UI
             brRt.anchorMin = new Vector2(0.5f, 0);
             brRt.anchorMax = new Vector2(0.5f, 1);
             brRt.pivot = new Vector2(0.5f, 0.5f);
-            brRt.sizeDelta = new Vector2(500, -16);
+            brRt.sizeDelta = new Vector2(200, -16);
             brRt.anchoredPosition = Vector2.zero;
             var hlg = btnRoot.GetComponent<HorizontalLayoutGroup>();
             hlg.spacing = 8;
@@ -53,11 +51,7 @@ namespace ACLS.UI
             hlg.childForceExpandWidth = false;
             hlg.childForceExpandHeight = true;
 
-            AddBtn(brRt, "暂停 (空格)", 140, () => clock.TogglePause());
-            AddBtn(brRt, "1 慢",        80, () => clock.SetSpeed(1));
-            AddBtn(brRt, "2 中",        80, () => clock.SetSpeed(2));
-            AddBtn(brRt, "3 快",        80, () => clock.SetSpeed(3));
-            AddBtn(brRt, "调试",        64, () => debugPanel?.Toggle());
+            AddBtn(brRt, "调试", 80, () => debugPanel?.Toggle());
 
             statusLabel = UiKit.CreateText(transform, "Status", 21, TextAlignmentOptions.Right);
             var stRt = (RectTransform)statusLabel.transform;
@@ -113,23 +107,9 @@ namespace ACLS.UI
             if (dateLabel != null) dateLabel.text = world.Date.ToString();
             if (statusLabel == null) return;
 
-            string head;
-            if (chat != null && chat.Busy)
-            {
-                head = $"<color=#f5d57a><b>[{CurrentSpinner()}]</b> 与旁白通信中…</color>";
-            }
-            else
-            {
-                string speedText = clock.Speed switch
-                {
-                    1 => L10n.T("hud.speed.slow"),
-                    3 => L10n.T("hud.speed.fast"),
-                    _ => L10n.T("hud.speed.normal"),
-                };
-                head = world.Paused
-                    ? $"<color=#f4cc6a>{L10n.T("hud.pause")}</color>  ·  {speedText}"
-                    : $"{L10n.T("hud.running")}  ·  {speedText}";
-            }
+            string head = chat != null && chat.Busy
+                ? $"<color=#f5d57a><b>[{CurrentSpinner()}]</b> 与旁白通信中…</color>"
+                : L10n.T("hud.running");
 
             string tokens = "";
             if (chat != null && chat.CallCount > 0)
