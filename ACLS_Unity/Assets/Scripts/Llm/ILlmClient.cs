@@ -11,14 +11,19 @@ namespace ACLS.Llm
         // Returns the assistant content + token usage. Caller parses JSON /
         // does post-processing. Implementations should throw on HTTP errors
         // with a message suitable for surfacing to the user.
+        // jsonObject: when true the provider is asked to constrain output to a
+        // single JSON object (OpenAI response_format=json_object). Pass false for
+        // free-form prose (narrator). Default true preserves legacy behavior.
         Task<LlmResponse> CompleteAsync(string systemPrompt,
                                         IReadOnlyList<ChatMessage> messages,
-                                        CancellationToken ct);
+                                        CancellationToken ct,
+                                        bool jsonObject = true);
 
         Task<LlmResponse> CompleteStreamAsync(string systemPrompt,
                                               IReadOnlyList<ChatMessage> messages,
                                               System.Action<string> onTextDelta,
-                                              CancellationToken ct);
+                                              CancellationToken ct,
+                                              bool jsonObject = true);
 
         /// <summary>
         /// 带工具调用（tool_use / function calling）的流式调用。
@@ -34,6 +39,7 @@ namespace ACLS.Llm
             IReadOnlyList<ChatMessage> messages,
             IReadOnlyList<ToolDefinition> tools,
             Action<string> onTextDelta,
-            CancellationToken ct);
+            CancellationToken ct,
+            bool jsonObject = true);
     }
 }

@@ -143,6 +143,14 @@ namespace ACLS.Authoring
                 OnParticipantsChanged?.Invoke(currentParticipants);
             };
 
+            orchestrator.OnEffects += effects =>
+            {
+                // 把记账员落地的数据用黄色文字显示在对话流里（便于核对双层 LLM 的记账）。
+                string line = FormatEffectsYellow(effects);
+                if (!string.IsNullOrEmpty(line))
+                    OnBlock?.Invoke(UI.ChatBlock.Static(ChatRole.System, "", line));
+            };
+
             orchestrator.OnUsage += (last, cumulative) =>
             {
                 LastUsage = last;
@@ -268,7 +276,22 @@ namespace ACLS.Authoring
         // Kicks off the first LLM call right after stage creation.
         public void StartOpening(CharacterPresets.Preset preset)
         {
-            if (!Ready || Busy || preset == null) return;
+            if (preset == null)
+            {
+                Log.Warn(Log.Channels.Llm, "[ERR] StartOpening 跳过: preset is null");
+                return;
+            }
+            if (!Ready)
+            {
+                Log.Warn(Log.Channels.Llm, "[ERR] StartOpening 跳过: Ready=false (world={0} llm={1} orch={2})",
+                    world != null, llm != null, orchestrator != null);
+                return;
+            }
+            if (Busy)
+            {
+                Log.Warn(Log.Channels.Llm, "[ERR] StartOpening 跳过: Busy=true");
+                return;
+            }
             orchestrator?.StartOpening(preset);
         }
 
@@ -359,6 +382,35 @@ namespace ACLS.Authoring
         }
 
         // -------- helpers --------
+
+        // Formats the bookkeeper-recorded effects into one yellow rich-text line.
+        // Returns "" when there is nothing to show (so callers can skip the block).
+        private static string FormatEffectsYellow(IReadOnlyList<LlmReply.EffectSpec> effects)
+        {
+            if (effects == null || effects.Count == 0) return "";
+
+            var parts = new List<string>(effects.Count);
+            for (int i = 0; i < effects.Count; i++)
+            {
+                var e = effects[i];
+                if (e == null || string.IsNullOrEmpty(e.Kind)) continue;
+                string d = (e.Delta >= 0 ? "+" : "") + e.Delta;
+                switch (e.Kind)
+                {
+                    case "AdjustStat":    parts.Add($"{e.Stat}{d}"); break;
+                    case "AdjustGold":    parts.Add($"金{d}"); break;
+                    case "AdjustOpinion": parts.Add($"{e.Target}好感{d}"); break;
+                    case "AddTrait":      parts.Add($"+特质[{e.Trait}]"); break;
+                    case "RemoveTrait":   parts.Add($"-特质[{e.Trait}]"); break;
+                    case "SetFlag":       parts.Add($"标记+{e.Flag}"); break;
+                    case "ClearFlag":     parts.Add($"标记-{e.Flag}"); break;
+                    default:              parts.Add(e.Kind); break;
+                }
+            }
+
+            if (parts.Count == 0) return "";
+            return $"<size=15><color=#ffd24a>「数据」{string.Join(" · ", parts)}</color></size>";
+        }
 
         private void ApplyEffects(LlmReply.Choice choice)
         {

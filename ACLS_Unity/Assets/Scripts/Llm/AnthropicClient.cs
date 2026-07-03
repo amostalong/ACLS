@@ -44,8 +44,12 @@ namespace ACLS.Llm
 
         public async Task<LlmResponse> CompleteAsync(string systemPrompt,
                                                      IReadOnlyList<ChatMessage> messages,
-                                                     CancellationToken ct)
+                                                     CancellationToken ct,
+                                                     bool jsonObject = true)
         {
+            // jsonObject is reserved: Anthropic has no response_format. JSON
+            // constraint is enforced via prompt / tool schema instead. Flag
+            // accepted to satisfy ILlmClient; not yet wired.
             var body = new
             {
                 model = model,
@@ -79,7 +83,8 @@ namespace ACLS.Llm
         public async Task<LlmResponse> CompleteStreamAsync(string systemPrompt,
                                                            IReadOnlyList<ChatMessage> messages,
                                                            Action<string> onTextDelta,
-                                                           CancellationToken ct)
+                                                           CancellationToken ct,
+                                                           bool jsonObject = true)
         {
             var body = new
             {
@@ -103,7 +108,8 @@ namespace ACLS.Llm
             IReadOnlyList<ChatMessage> messages,
             IReadOnlyList<ToolDefinition> tools,
             Action<string> onTextDelta,
-            CancellationToken ct)
+            CancellationToken ct,
+            bool jsonObject = true)
         {
             // Build the request body with tools
             var bodyObj = new JObject

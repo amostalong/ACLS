@@ -43,6 +43,7 @@ namespace ACLS.Authoring
         // ---- events (UI-facing) ----
         public event Action<string> OnNarration;               // narration text
         public event Action<IReadOnlyList<LlmReply.Choice>> OnChoices;
+        public event Action<IReadOnlyList<LlmReply.EffectSpec>> OnEffects;   // bookkeeper-recorded data (shown in yellow)
         public event Action<IReadOnlyList<LlmReply.Participant>> OnParticipants;
         public event Action<DialogueStateType, DialogueStateType> OnStateChanged;
         public event Action<bool> OnBusyChanged;
@@ -179,13 +180,21 @@ namespace ACLS.Authoring
                     var effectsResp = await CompleteEffectsOnly(effectsPrompt, messages, thisCts.Token);
                     TrackUsageSilent(effectsResp.Usage);
 
-                    if (!LlmReply.TryParseEffectsOnly(effectsResp.Content, out var effectsReply, out var effectsError))
+                    LlmReply effectsReply = null;
+                    if (!LlmReply.TryParseEffectsOnly(effectsResp.Content, out effectsReply, out var effectsError))
                     {
-                        OnError?.Invoke("开场 effects 解析失败：" + effectsError);
-                        return;
+                        // Degrade gracefully: narration + choices are still valid.
+                        Log.Warn(Log.Channels.Llm,
+                            "开场 effects 解析失败，降级使用空 effects：{0} | rawLen={1} | content前200={2}",
+                            effectsError,
+                            effectsResp.Content?.Length ?? 0,
+                            Truncate(effectsResp.Content ?? "", 200));
+                        result = state.BuildNarrationTextResult(narrationResp.Content, narration, choices, null);
                     }
-
-                    result = state.BuildNarrationTextResult(narrationResp.Content, narration, choices, effectsReply);
+                    else
+                    {
+                        result = state.BuildNarrationTextResult(narrationResp.Content, narration, choices, effectsReply);
+                    }
                 }
                 else
                 {
@@ -309,8 +318,8 @@ namespace ACLS.Authoring
             try
             {
                 // ══════ Step 1: World（世界观设定） ══════
-                Log.Info(Log.Channels.Llm, "▸ 流水线 Step 1/6: WorldBuild");
-                EmitSystemStatus("正在构建世界观设定 (1/6)…");
+                Log.Info(Log.Channels.Llm, "▸ 流水线 Step 1/5: WorldBuild");
+                EmitSystemStatus("正在构建世界观设定 (1/5)…");
                 {
                     string fragment = LoadFragment("Fragment_WorldBuild");
                     string prompt = fragment
@@ -354,13 +363,13 @@ namespace ACLS.Authoring
                         playerContext = sb.ToString().Trim();
                     }
                     SaveManager.Save(World, GameMemory.Instance);
-                    Log.Info(Log.Channels.Llm, "[OK] Step 1/6 WorldBuild 完成 (+{0:F1}s)", pipelineSw.Elapsed.TotalSeconds);
+                    Log.Info(Log.Channels.Llm, "[OK] Step 1/5 WorldBuild 完成 (+{0:F1}s)", pipelineSw.Elapsed.TotalSeconds);
                     EmitSystemStatus("世界观设定完成 ✓");
                 }
 
                 // ══════ Step 2: L4（宏观势力） ══════
-                Log.Info(Log.Channels.Llm, "▸ 流水线 Step 2/6: L4Build");
-                EmitSystemStatus("正在构建宏观势力格局 (2/6)…");
+                Log.Info(Log.Channels.Llm, "▸ 流水线 Step 2/5: L4Build");
+                EmitSystemStatus("正在构建宏观势力格局 (2/5)…");
                 {
                     string fragment = LoadFragment("Fragment_L4Build");
                     string prompt = fragment
@@ -390,13 +399,13 @@ namespace ACLS.Authoring
                     PublishNarration(l4Narration);
                     SimLayerSync.Sync(World);
                     SaveManager.Save(World, GameMemory.Instance);
-                    Log.Info(Log.Channels.Llm, "[OK] Step 2/6 L4Build 完成，{0} 个势力 (+{1:F1}s)", l4Factions.Factions.Count, pipelineSw.Elapsed.TotalSeconds);
+                    Log.Info(Log.Channels.Llm, "[OK] Step 2/5 L4Build 完成，{0} 个势力 (+{1:F1}s)", l4Factions.Factions.Count, pipelineSw.Elapsed.TotalSeconds);
                     EmitSystemStatus("宏观势力格局构建完成 ✓");
                 }
 
                 // ══════ Step 3: L3（区域势力） ══════
-                Log.Info(Log.Channels.Llm, "▸ 流水线 Step 3/6: L3Build");
-                EmitSystemStatus("正在构建区域势力网络 (3/6)…");
+                Log.Info(Log.Channels.Llm, "▸ 流水线 Step 3/5: L3Build");
+                EmitSystemStatus("正在构建区域势力网络 (3/5)…");
                 {
                     string fragment = LoadFragment("Fragment_L3Build");
                     string prompt = fragment
@@ -430,13 +439,13 @@ namespace ACLS.Authoring
                     PublishNarration(l3Narration);
                     SimLayerSync.Sync(World);
                     SaveManager.Save(World, GameMemory.Instance);
-                    Log.Info(Log.Channels.Llm, "[OK] Step 3/6 L3Build 完成，{0} 个区域势力 (+{1:F1}s)", l3Factions.Factions.Count, pipelineSw.Elapsed.TotalSeconds);
+                    Log.Info(Log.Channels.Llm, "[OK] Step 3/5 L3Build 完成，{0} 个区域势力 (+{1:F1}s)", l3Factions.Factions.Count, pipelineSw.Elapsed.TotalSeconds);
                     EmitSystemStatus("区域势力网络构建完成 ✓");
                 }
 
                 // ══════ Step 4: L2（近域网络） ══════
-                Log.Info(Log.Channels.Llm, "▸ 流水线 Step 4/6: L2Build");
-                EmitSystemStatus("正在构建近域人际网络 (4/6)…");
+                Log.Info(Log.Channels.Llm, "▸ 流水线 Step 4/5: L2Build");
+                EmitSystemStatus("正在构建近域人际网络 (4/5)…");
                 {
                     string fragment = LoadFragment("Fragment_L2Build");
                     string prompt = fragment
@@ -487,14 +496,14 @@ namespace ACLS.Authoring
                     PublishNarration(l2Narration);
                     SimLayerSync.Sync(World);
                     SaveManager.Save(World, GameMemory.Instance);
-                    Log.Info(Log.Channels.Llm, "[OK] Step 4/6 L2Build 完成: chars={0} factions={1} places={2} (+{3:F1}s)",
+                    Log.Info(Log.Channels.Llm, "[OK] Step 4/5 L2Build 完成: chars={0} factions={1} places={2} (+{3:F1}s)",
                         l2Entities.Chars.Count, l2Entities.Factions.Count, l2Entities.Places.Count, pipelineSw.Elapsed.TotalSeconds);
                     EmitSystemStatus("近域人际网络构建完成 ✓");
                 }
 
-                // ══════ Step 5: PlayerExpansion + Storyline ══════
-                Log.Info(Log.Channels.Llm, "▸ 流水线 Step 5/6: PlayerExpansion + Storyline");
-                EmitSystemStatus("正在扩展角色设定与故事线 (5/6)…");
+                // ══════ Step 5: 角色设定 + 故事线 + 初始场景（合并为一次调用） ══════
+                Log.Info(Log.Channels.Llm, "▸ 流水线 Step 5/5: 角色设定 + 初始场景");
+                EmitSystemStatus("正在扩展角色设定、故事线与初始场景 (5/5)…");
                 {
                     string fragment = LoadFragment("Fragment_PlayerExpandStoryline");
                     string prompt = fragment
@@ -505,12 +514,13 @@ namespace ACLS.Authoring
                         .Replace("{player_context}", playerContext);
 
                     var resp = await CompleteStreamWithThinking(prompt,
-                        new List<ChatMessage> { new ChatMessage(ChatRole.User, "开始角色丰富化与故事线构建") }, pipelineCts.Token);
+                        new List<ChatMessage> { new ChatMessage(ChatRole.User, "开始角色丰富化、故事线与初始场景构建") }, pipelineCts.Token);
                     TrackUsage(resp.Usage);
 
+                    // 同一份回复跑两个解析器：PlayerExpand 读 pe/sl/ne，L1 读 l1s（字段互不重叠）。
                     if (!PlayerExpandReply.TryParse(resp.Content, out var peReply, out var peError))
                     {
-                        Log.Error(Log.Channels.Llm, "PlayerExpand 步骤解析失败: {0}", peError);
+                        Log.Error(Log.Channels.Llm, "角色设定步骤解析失败: {0}", peError);
                         OnError?.Invoke("角色丰富化失败：" + peError);
                         onComplete?.Invoke(false);
                         return;
@@ -547,65 +557,33 @@ namespace ACLS.Authoring
                     // Store storyline text
                     World.Stage.L2Expansion = peReply.ToContextText();
 
-                    // Rebuild playerContext with enriched data for L1 step
-                    {
-                        var p = World.Player;
-                        var sb = new System.Text.StringBuilder();
-                        if (p != null)
-                        {
-                            sb.Append($"姓名：{p.Name}，{p.AgeAt(World.Date)}岁，{(p.Sex == Sim.Sex.Male ? "男" : "女")}");
-                            if (!string.IsNullOrWhiteSpace(p.Courtesy)) sb.Append($"，字{p.Courtesy}");
-                            if (!string.IsNullOrWhiteSpace(p.BackgroundStory)) sb.Append($"\n[背景] {p.BackgroundStory}");
-                            if (!string.IsNullOrWhiteSpace(p.Values)) sb.Append($"\n[价值观] {p.Values}");
-                            if (!string.IsNullOrWhiteSpace(p.CurrentGoal)) sb.Append($"\n[近期目标] {p.CurrentGoal}");
-                            if (!string.IsNullOrWhiteSpace(p.Secret)) sb.Append($"\n[秘密] {p.Secret}");
-                            if (p.Connections.Count > 0) sb.Append($"\n[人脉] {string.Join("、", p.Connections)}");
-                            if (p.KnownFacts.Count > 0) sb.Append($"\n[已知情报] {string.Join("、", p.KnownFacts)}");
-                            if (p.OwnedItems.Count > 0) sb.Append($"\n[随身物品] {string.Join("、", p.OwnedItems)}");
-                        }
-                        playerContext = sb.ToString().Trim();
-                    }
-
-                    PublishNarration(peReply.Narration);
-                    SaveManager.Save(World, GameMemory.Instance);
-                    Log.Info(Log.Channels.Llm, "[OK] Step 5/6 PlayerExpansion + Storyline 完成: storylines={0} (+{1:F1}s)", peReply.Storylines.Count, pipelineSw.Elapsed.TotalSeconds);
-                    EmitSystemStatus("角色设定与故事线扩展完成 ✓");
-                }
-
-                // ══════ Step 6: L1（当前场景） ══════
-                Log.Info(Log.Channels.Llm, "▸ 流水线 Step 6/6: L1Build");
-                EmitSystemStatus("正在构建初始场景 (6/6)…");
-                {
-                    string fragment = LoadFragment("Fragment_L1Build");
-                    string entitySummary = BuildStep6EntitySummary(pipelineWorldBuildReply, pipelinePlayerExpandReply, playerContext);
-                    string prompt = fragment.Replace("{entity_summary}", entitySummary);
-
-                    var resp = await CompleteStreamWithThinking(prompt,
-                        new List<ChatMessage> { new ChatMessage(ChatRole.User, "开始构建初始场景") }, pipelineCts.Token);
-                    TrackUsage(resp.Usage);
-
-                    Log.Debug(Log.Channels.Llm, "[L1] 原始响应前200字: {0}", Truncate(SanitizeJson(resp.Content), 200));
-                    Log.Debug(Log.Channels.Llm, "[L1] 原始响应长度: {0}", resp.Content?.Length ?? 0);
+                    // Parse the L1 scene from the SAME response.
                     var (l1Ok, l1Text, l1Narration) = ParseL1Reply(resp.Content);
                     if (!l1Ok)
                     {
-                        Log.Error(Log.Channels.Llm, "L1 步骤解析失败，原始内容={0}", Truncate(resp.Content ?? "(空)", 500));
+                        Log.Error(Log.Channels.Llm, "初始场景解析失败，原始内容={0}", Truncate(resp.Content ?? "(空)", 500));
                         OnError?.Invoke("初始场景构建失败。");
                         onComplete?.Invoke(false);
                         return;
                     }
-
-                    SetThinking("");
                     World.Stage.L1Stage = l1Text;
-                    PublishNarration(l1Narration);
+
+                    // nar 是同一个字段，两个解析器读到的一致——只发布一次。
+                    string narration = !string.IsNullOrWhiteSpace(peReply.Narration) ? peReply.Narration : l1Narration;
+                    PublishNarration(narration);
+
                     SaveManager.Save(World, GameMemory.Instance);
-                    Log.Info(Log.Channels.Llm, "[OK] Step 6/6 L1Build 完成 (+{0:F1}s)", pipelineSw.Elapsed.TotalSeconds);
-                    EmitSystemStatus("初始场景构建完成 ✓");
+                    Log.Info(Log.Channels.Llm, "[OK] Step 5/5 角色设定 + 初始场景 完成: storylines={0} (+{1:F1}s)", peReply.Storylines.Count, pipelineSw.Elapsed.TotalSeconds);
+                    EmitSystemStatus("角色设定与初始场景构建完成 ✓");
                 }
 
                 // ══════ 全部完成 ══════
                 Log.Info(Log.Channels.Llm, "[OK] 世界流水线全部完成 (+{0:F1}s total)", pipelineSw.Elapsed.TotalSeconds);
                 EmitSystemStatus("世界构建全部完成，准备开始游戏 🎮");
+                // Release the busy flag BEFORE the onComplete callback runs so that
+                // callbacks (e.g. NewGameView → chat.StartOpening) see Busy=false
+                // and can kick off the next LLM call without bouncing off the guard.
+                SetBusy(false);
                 onComplete?.Invoke(true);
             }
             catch (OperationCanceledException)
@@ -615,12 +593,14 @@ namespace ACLS.Authoring
                     Log.Error(Log.Channels.Llm, "已中断世界流水线");
                     OnError?.Invoke("已中断世界构建。");
                 }
+                SetBusy(false);
                 onComplete?.Invoke(false);
             }
             catch (Exception ex)
             {
                 Log.Error(Log.Channels.Llm, "世界流水线异常: {0}", ex.Message);
                 OnError?.Invoke("世界构建异常：" + ex.Message);
+                SetBusy(false);
                 onComplete?.Invoke(false);
             }
             finally
@@ -768,13 +748,24 @@ namespace ACLS.Authoring
                         var effectsResp = await CompleteEffectsOnly(effectsPrompt, messages, thisCts.Token);
                         TrackUsageSilent(effectsResp.Usage);
 
-                        if (!LlmReply.TryParseEffectsOnly(effectsResp.Content, out var effectsReply, out var effectsError))
+                        LlmReply effectsReply = null;
+                        if (!LlmReply.TryParseEffectsOnly(effectsResp.Content, out effectsReply, out var effectsError))
                         {
-                            OnError?.Invoke("effects 输出解析失败：" + effectsError);
-                            return;
+                            // Degrade gracefully: narration + choices are still valid.
+                            // The state is mutated by the narration call, but local data
+                            // (stats/opinions/gold) just won't change this turn. Log the
+                            // raw response so the operator can see what the LLM returned.
+                            Log.Warn(Log.Channels.Llm,
+                                "effects 解析失败，降级使用空 effects：{0} | rawLen={1} | content前200={2}",
+                                effectsError,
+                                effectsResp.Content?.Length ?? 0,
+                                Truncate(effectsResp.Content ?? "", 200));
+                            result = BuildNarrationTextResult(narrationResp.Content, narration, choices, null);
                         }
-
-                        result = BuildNarrationTextResult(narrationResp.Content, narration, choices, effectsReply);
+                        else
+                        {
+                            result = BuildNarrationTextResult(narrationResp.Content, narration, choices, effectsReply);
+                        }
                     }
                     else
                     {
@@ -869,7 +860,7 @@ namespace ACLS.Authoring
                     else
                         UniTask.Post(() => OnNarrationDelta?.Invoke(narration));
                 }
-            }, ct);
+            }, ct, jsonObject: false);   // narrator emits plain text (--- + numbered choices), NOT json_object
 
             sw.Stop();
             lastResponseTime = (float)sw.Elapsed.TotalSeconds;
@@ -1346,6 +1337,7 @@ namespace ACLS.Authoring
 
             OnParticipants?.Invoke(result.Participants);
             OnChoices?.Invoke(result.Choices);
+            OnEffects?.Invoke(result.Effects);
 
             // 3. Check for state transition.
             var nextType = state.GetNextState(result);

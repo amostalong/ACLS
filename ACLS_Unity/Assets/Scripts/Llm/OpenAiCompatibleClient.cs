@@ -41,18 +41,20 @@ namespace ACLS.Llm
 
         public async Task<LlmResponse> CompleteAsync(string systemPrompt,
                                                      IReadOnlyList<ChatMessage> messages,
-                                                     CancellationToken ct)
+                                                     CancellationToken ct,
+                                                     bool jsonObject = true)
         {
             var openAiMessages = BuildOpenAiMessages(systemPrompt, messages, false);
-            var body = new
+            var bodyObj = new JObject
             {
-                model = model,
-                max_tokens = maxTokens <= 0 ? 8192 : maxTokens,
-                messages = openAiMessages,
-                response_format = new { type = "json_object" },
+                ["model"] = model,
+                ["max_tokens"] = maxTokens <= 0 ? 8192 : maxTokens,
+                ["messages"] = openAiMessages,
             };
+            if (jsonObject)
+                bodyObj["response_format"] = new JObject { ["type"] = "json_object" };
 
-            string json = JsonConvert.SerializeObject(body);
+            string json = bodyObj.ToString(Formatting.None);
             if (verbose) Log.Info(Log.Channels.Network, "[OpenAI] → {0}", Truncate(json, 300));
 
             return await SendOpenAi(json, ct);
@@ -63,20 +65,22 @@ namespace ACLS.Llm
         public async Task<LlmResponse> CompleteStreamAsync(string systemPrompt,
                                                            IReadOnlyList<ChatMessage> messages,
                                                            Action<string> onTextDelta,
-                                                           CancellationToken ct)
+                                                           CancellationToken ct,
+                                                           bool jsonObject = true)
         {
             var openAiMessages = BuildOpenAiMessages(systemPrompt, messages, false);
 
-            var body = new
+            var bodyObj = new JObject
             {
-                model = model,
-                max_tokens = maxTokens <= 0 ? 8192 : maxTokens,
-                messages = openAiMessages,
-                response_format = new { type = "json_object" },
-                stream = true,
+                ["model"] = model,
+                ["max_tokens"] = maxTokens <= 0 ? 8192 : maxTokens,
+                ["messages"] = openAiMessages,
+                ["stream"] = true,
             };
+            if (jsonObject)
+                bodyObj["response_format"] = new JObject { ["type"] = "json_object" };
 
-            string json = JsonConvert.SerializeObject(body);
+            string json = bodyObj.ToString(Formatting.None);
             if (verbose) Log.Info(Log.Channels.Network, "[OpenAI] → {0}", Truncate(json, 300));
 
             return await StreamOpenAi(json, onTextDelta, ct);
@@ -89,7 +93,8 @@ namespace ACLS.Llm
             IReadOnlyList<ChatMessage> messages,
             IReadOnlyList<ToolDefinition> tools,
             Action<string> onTextDelta,
-            CancellationToken ct)
+            CancellationToken ct,
+            bool jsonObject = true)
         {
             var openAiMessages = BuildOpenAiMessages(systemPrompt, messages, true);
 
@@ -99,8 +104,9 @@ namespace ACLS.Llm
                 ["max_tokens"] = maxTokens <= 0 ? 8192 : maxTokens,
                 ["messages"] = openAiMessages,
                 ["stream"] = true,
-                ["response_format"] = new JObject { ["type"] = "json_object" },
             };
+            if (jsonObject)
+                bodyObj["response_format"] = new JObject { ["type"] = "json_object" };
 
             if (tools != null && tools.Count > 0)
                 bodyObj["tools"] = BuildOpenAiTools(tools);
@@ -269,8 +275,19 @@ namespace ACLS.Llm
             try { parsed = JObject.Parse(respText); }
             catch (JsonException ex) { throw new HttpRequestException("响应不是合法 JSON：" + ex.Message); }
 
+            // Some providers (DeepSeek, Moonshot, etc.) return a top-level "error"
+            // object on bad requests / rate limits / auth failures. Surface that
+            // before complaining about missing choices.
+            var errObj = parsed["error"] as JObject;
+            if (errObj != null)
+            {
+                string em = (string)errObj["message"] ?? errObj.ToString();
+                throw new HttpRequestException("服务端 error: " + em);
+            }
+
             var choices = parsed["choices"] as JArray;
-            if (choices == null || choices.Count == 0) throw new HttpRequestException("响应缺 choices 字段");
+            if (choices == null || choices.Count == 0)
+                throw new HttpRequestException("响应缺 choices 字段（respText前200=" + Truncate(respText, 200) + "）");
 
             var message = choices[0]?["message"];
             if (message == null) throw new HttpRequestException("响应缺 choices[0].message");
