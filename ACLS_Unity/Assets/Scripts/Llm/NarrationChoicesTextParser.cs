@@ -21,11 +21,22 @@ namespace ACLS.Llm
             @"^[ \t]*(?:-{2,6}|—{1,3})[ \t]*$",
             RegexOptions.Multiline);
 
-        // Matches a choice line with a 1-2 digit number (or circled digit) followed by
-        // ".", "、", ")", "）" — supports both ASCII and CJK variants the LLM may emit.
+        // Matches a choice line. Accepts many LLM deviations:
+        //   1. xxx  /  1) xxx  /  1）xxx  /  1、xxx
+        //   ① ② ...  ⑩  (followed by space, no required punct)
+        //   第一项 / 第一项 xxx / 选项一 xxx / A. xxx / a) xxx
+        //   * xxx / - xxx / · xxx   (loose bullet)
+        // Group 1 is the captured label.
         private static readonly Regex ChoiceLineRegex = new Regex(
-            @"^\s*(\d{1,2}|[①-⑩])[\.、\)）]\s*(.+?)\s*$",
+            @"^\s*(?:(?:\d{1,2}|[①-⑩])\s*[\.\u3001\)\uFF09]\s*|[①-⑩]\s*|(?:第[一-十百]+项|选项?[一-十百]+|[\*\-•·])\s*)(.{2,}?)\s*$",
             RegexOptions.Compiled);
+
+        // Loose fallback: a non-empty line that is short enough to be a choice label.
+        // Used only when the strict ChoiceLineRegex matched zero rows.
+        private static readonly Regex LooseChoiceLineRegex = new Regex(
+            @"^\s*(.{2,40}[。！？]?\s*)$",
+            RegexOptions.Compiled);
+
         private static readonly Regex EffectTagRegex = new Regex(@"^\s*@effect\s+(yes|no)\s*$", RegexOptions.Multiline | RegexOptions.IgnoreCase);
 
         public static string ExtractNarrationForStreaming(string raw)
@@ -108,11 +119,25 @@ namespace ACLS.Llm
             {
                 string line = lines[i].Trim();
                 if (line.Length == 0) continue;
+                if (line.Length > 60) continue;   // too long to be a button label
 
                 var m = ChoiceLineRegex.Match(line);
-                if (!m.Success) continue;
+                string label;
+                if (m.Success)
+                {
+                    // Group 1 is the captured label (the leading digit prefix is in a non-capturing group).
+                    label = m.Groups[1].Value.Trim();
+                }
+                else
+                {
+                    // Loose fallback: accept any short line that doesn't look like
+                    // a header / meta / section title. This is the safety net for
+                    // LLMs that emit choices without numbering at all.
+                    var lm = LooseChoiceLineRegex.Match(line);
+                    if (!lm.Success) continue;
+                    label = lm.Groups[1].Value.Trim();
+                }
 
-                string label = m.Groups[2].Value.Trim();
                 if (label.Length == 0) continue;
 
                 choices.Add(new LlmReply.Choice

@@ -11,7 +11,7 @@ namespace ACLS.UI
     public sealed class ChatPanelView : MonoBehaviour
     {
         private const float StatusBarHeight = 28f;
-        private const float InputRowHeight = 56f;
+        private const float InputRowHeight = 88f;          // 输入框高度, 容纳 2-3 行中文
         private const float ChoicesRowHeight = 56f;
         private const float MinBlockInterval = 0.5f;   // 两个 block 显示完成之间最小间隔
 
@@ -240,11 +240,21 @@ namespace ACLS.UI
 
         private void ApplyChoices(IReadOnlyList<LlmReply.Choice> choices)
         {
+            // Always tear down the old buttons first, so a (null / empty) new
+            // payload clears any leftover label from the previous turn instead
+            // of leaving orphan Text children on screen.
             for (int i = choicesContainer.childCount - 1; i >= 0; i--)
                 Destroy(choicesContainer.GetChild(i).gameObject);
             choiceButtons.Clear();
 
-            if (choices == null || choices.Count == 0) return;
+            if (choices == null || choices.Count == 0)
+            {
+                // Hide the whole row when there are no options — otherwise the
+                // placeholder area would still take vertical space.
+                choicesContainer.gameObject.SetActive(false);
+                return;
+            }
+            choicesContainer.gameObject.SetActive(true);
 
             for (int i = 0; i < choices.Count; i++)
             {
@@ -275,7 +285,7 @@ namespace ACLS.UI
             rowRt.offsetMin = new Vector2(8, 8);
             rowRt.offsetMax = new Vector2(-8, InputRowHeight);
 
-            input = MakeTmpInput(rowGo.transform, "Input", "输入你的行动…��", charLimit: 240);
+            input = MakeTmpInput(rowGo.transform, "Input", "输入你的行动…", charLimit: 240);
             var inputRt = (RectTransform)input.transform;
             inputRt.anchorMin = new Vector2(0, 0);
             inputRt.anchorMax = new Vector2(1, 1);
@@ -656,8 +666,10 @@ namespace ACLS.UI
             go.GetComponent<Image>().color = new Color(0.06f, 0.06f, 0.10f, 1f);
 
             var field = go.GetComponent<TMP_InputField>();
-            field.lineType = TMP_InputField.LineType.SingleLine;
+            field.lineType = TMP_InputField.LineType.MultiLineNewline;   // allow enter for newline, not submit
             field.characterLimit = charLimit;
+            field.richText = false;  // 输入的 <b> 等标签必须当纯文本显示, 不可被解析
+            field.restoreOriginalTextOnEscape = true;
 
             var areaGo = new GameObject("TextArea", typeof(RectTransform), typeof(RectMask2D));
             areaGo.transform.SetParent(go.transform, false);
@@ -680,8 +692,9 @@ namespace ACLS.UI
             ph.font = UiKit.TmpFont;
             ph.fontSize = 19;
             ph.color = new Color(1, 1, 1, 0.35f);
-            ph.alignment = TextAlignmentOptions.Left;
-            ph.enableWordWrapping = false;
+            ph.alignment = TextAlignmentOptions.TopLeft;
+            ph.enableWordWrapping = true;   // placeholder wraps like real input
+            ph.richText = false;             // placeholder 也不解析 rich tags
             ph.text = placeholder;
             field.placeholder = ph;
 
@@ -698,8 +711,8 @@ namespace ACLS.UI
             t.fontSize = 19;
             t.color = Color.white;
             t.alignment = TextAlignmentOptions.TopLeft;
-            t.enableWordWrapping = false;
-            t.richText = false;
+            t.enableWordWrapping = true;   // wrap on multi-line so 输入框高度用上
+            t.richText = false;             // 用户输入的 <b> 等符号当纯文本显示
             field.textComponent = t;
 
             return field;
