@@ -727,69 +727,49 @@ namespace ACLS.Authoring
             currentCts = thisCts;
             var swTotal = System.Diagnostics.Stopwatch.StartNew();
 
-            const int MaxRetries = 2;
-            var extraMessages = new List<ChatMessage>();
-
             try
             {
-                for (int attempt = 0; attempt <= MaxRetries; attempt++)
+                var messages = History.Recent(RecentMessages);
+
+                var swStream = System.Diagnostics.Stopwatch.StartNew();
+                var narrationResp = await CompleteNarrationAndChoicesStream(narrationPrompt, messages, thisCts.Token);
+                swStream.Stop();
+                TrackUsage(narrationResp.Usage);
+                Log.Info(Log.Channels.Llm, "[Timing] 文本流式调用: {0:F2}s", swStream.Elapsed.TotalSeconds);
+
+                var swParse = System.Diagnostics.Stopwatch.StartNew();
+                bool parsed = NarrationChoicesTextParser.TryParse(narrationResp.Content, out var narration, out var choices, out var effectTag, out var parseError);
+                swParse.Stop();
+                Log.Info(Log.Channels.Llm, "[Timing] 文本响应解析: {0:F2}s, content长度={1}", swParse.Elapsed.TotalSeconds, narrationResp.Content?.Length ?? 0);
+
+                if (!parsed)
                 {
-                    if (attempt > 0)
-                    {
-                        Log.Warn(Log.Channels.Llm, "解析失败，第{0}次重试...", attempt);
-                        extraMessages.Clear();
-                        extraMessages.Add(new ChatMessage(ChatRole.User,
-                            "你刚才的回复格式不符合要求。请输出纯文本叙事，正文后单独一行 ---，然后每行一个选项，格式为 1. 选项文本。不要任何额外解释。"));
-                    }
-
-                    var messages = History.Recent(RecentMessages);
-                    if (extraMessages.Count > 0)
-                        messages = messages.Concat(extraMessages).ToList();
-
-                    var swStream = System.Diagnostics.Stopwatch.StartNew();
-                    var narrationResp = await CompleteNarrationAndChoicesStream(narrationPrompt, messages, thisCts.Token);
-                    swStream.Stop();
-                    TrackUsage(narrationResp.Usage);
-                    Log.Info(Log.Channels.Llm, "[Timing] 文本流式调用 (attempt={0}): {1:F2}s", attempt, swStream.Elapsed.TotalSeconds);
-
-                    var swParse = System.Diagnostics.Stopwatch.StartNew();
-                    bool parsed = NarrationChoicesTextParser.TryParse(narrationResp.Content, out var narration, out var choices, out var effectTag, out var parseError);
-                    swParse.Stop();
-                    Log.Info(Log.Channels.Llm, "[Timing] 文本响应解析: {0:F2}s, content长度={1}", swParse.Elapsed.TotalSeconds, narrationResp.Content?.Length ?? 0);
-
-                    if (!parsed)
-                    {
-                        if (attempt < MaxRetries)
-                            continue;
-
-                        OnError?.Invoke("叙事输出解析失败：" + parseError);
-                        return;
-                    }
-
-                    // Publish narration + choices NOW with empty effects so the
-                    // UI can show the options immediately. The effects-only LLM
-                    // call runs in the background; its result (when it lands)
-                    // mutates the world and emits OnEffects for the yellow meta
-                    // line. Players no longer wait 8-17s for choices to appear.
-                    var result = BuildNarrationTextResult(narrationResp.Content, narration, choices, null);
-
-                    var swHandle = System.Diagnostics.Stopwatch.StartNew();
-                    HandleResult(CurrentState, result);
-                    swHandle.Stop();
-                    Log.Info(Log.Channels.Llm, "[Timing] HandleResult: {0:F2}s, 总耗时: {1:F2}s",
-                        swHandle.Elapsed.TotalSeconds, swTotal.Elapsed.TotalSeconds);
-
-                    // Kick off effects in the background. We pass a fresh List
-                    // copy of `messages` so the fire-and-forget task keeps its
-                    // own reference (the local `messages` would be GC'd once
-                    // SendAction returns).
-                    if (ShouldRequestEffectsForStagePlay(userInput, effectTag))
-                    {
-                        var messagesCopy = new List<ChatMessage>(messages);
-                        _ = RunEffectsInBackgroundAsync(narrationPrompt, messagesCopy,
-                            narrationResp.Content, narration, choices, userInput);
-                    }
+                    OnError?.Invoke("叙事输出解析失败：" + parseError);
                     return;
+                }
+
+                // Publish narration + choices NOW with empty effects so the
+                // UI can show the options immediately. The effects-only LLM
+                // call runs in the background; its result (when it lands)
+                // mutates the world and emits OnEffects for the yellow meta
+                // line. Players no longer wait 8-17s for choices to appear.
+                var result = BuildNarrationTextResult(narrationResp.Content, narration, choices, null);
+
+                var swHandle = System.Diagnostics.Stopwatch.StartNew();
+                HandleResult(CurrentState, result);
+                swHandle.Stop();
+                Log.Info(Log.Channels.Llm, "[Timing] HandleResult: {0:F2}s, 总耗时: {1:F2}s",
+                    swHandle.Elapsed.TotalSeconds, swTotal.Elapsed.TotalSeconds);
+
+                // Kick off effects in the background. We pass a fresh List
+                // copy of `messages` so the fire-and-forget task keeps its
+                // own reference (the local `messages` would be GC'd once
+                // SendAction returns).
+                if (ShouldRequestEffectsForStagePlay(userInput, effectTag))
+                {
+                    var messagesCopy = new List<ChatMessage>(messages);
+                    _ = RunEffectsInBackgroundAsync(narrationPrompt, messagesCopy,
+                        narrationResp.Content, narration, choices, userInput);
                 }
             }
             catch (OperationCanceledException)

@@ -81,7 +81,7 @@ namespace ACLS.Llm
                 bodyObj["response_format"] = new JObject { ["type"] = "json_object" };
 
             string json = bodyObj.ToString(Formatting.None);
-            if (verbose) Log.Info(Log.Channels.Network, "[OpenAI] → {0}", Truncate(json, 300));
+            if (verbose) Log.Info(Log.Channels.Network, "[OpenAI] → {0}", Truncate(json, 600));
 
             return await StreamOpenAi(json, onTextDelta, ct);
         }

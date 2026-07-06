@@ -99,7 +99,6 @@ namespace ACLS.Authoring
 
             sb.Append(config?.SystemPrompt ?? "");
             sb.Append("\n\n").Append(FragmentFor(stateType));
-            sb.Append("\n\n").Append(NarrationTextFormatFor(stateType));
 
             if (stateType == DialogueStateType.StagePlay && world.Stage != null)
             {
@@ -228,17 +227,6 @@ namespace ACLS.Authoring
             DialogueStateType.ActorCreation => LoadFragment("Fragment_CharacterCreation"),
             DialogueStateType.StagePlay     => LoadFragment("Fragment_FreeNarrative"),
             _ => "",
-        };
-
-        private static string NarrationTextFormatFor(DialogueStateType type) => type switch
-        {
-            DialogueStateType.StagePlay =>
-                "每次回复使用纯文本，不要 JSON。\n" +
-                "先输出 2-4 段中文叙事。\n" +
-                "叙事正文结束后，单独一行输出 --- 作为分隔线。\n" +
-                "分隔线后每行一个选项，格式固定为：1. 选项文本\\n2. 选项文本\\n3. 选项文本。\n" +
-                "总共输出 1-4 个选项。最后再单独一行输出 @effect yes 或 @effect no。不要额外解释，不要围栏。",
-            _ => ""
         };
 
         private static string EffectsOnlyFormatFor(DialogueStateType type) => type switch

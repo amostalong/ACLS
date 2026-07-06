@@ -5,6 +5,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using ACLS.Authoring;
 using ACLS.Llm;
+using ACLS.Logging;
 
 namespace ACLS.UI
 {
@@ -12,7 +13,6 @@ namespace ACLS.UI
     {
         private const float StatusBarHeight = 28f;
         private const float InputRowHeight = 88f;          // 输入框高度, 容纳 2-3 行中文
-        private const float ChoicesRowHeight = 56f;
         private const float MinBlockInterval = 0.5f;   // 两个 block 显示完成之间最小间隔
 
         private ChatBridge bridge;
@@ -25,6 +25,7 @@ namespace ACLS.UI
         private Button sendBtn;
         private Button cancelBtn;
         private RectTransform choicesContainer;
+        private RectTransform _scrollRt;
         private List<Button> choiceButtons = new List<Button>();
 
         // ── Block queue ──
@@ -136,7 +137,8 @@ namespace ACLS.UI
             var scrollRt = (RectTransform)scrollGo.transform;
             scrollRt.anchorMin = new Vector2(0, 0);
             scrollRt.anchorMax = new Vector2(1, 1);
-            scrollRt.offsetMin = new Vector2(8, InputRowHeight + StatusBarHeight + ChoicesRowHeight + 8);
+            _scrollRt = scrollRt;
+            scrollRt.offsetMin = new Vector2(8, InputRowHeight + StatusBarHeight + 8);
             scrollRt.offsetMax = new Vector2(-8, -8);
             scrollGo.GetComponent<Image>().color = new Color(0.05f, 0.05f, 0.08f, 0.9f);
 
@@ -197,27 +199,32 @@ namespace ACLS.UI
 
         private void BuildChoicesRow(Transform parent)
         {
-            var rowGo = new GameObject("Choices", typeof(RectTransform), typeof(HorizontalLayoutGroup));
+            var rowGo = new GameObject("Choices", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
             rowGo.transform.SetParent(parent, false);
             choicesContainer = (RectTransform)rowGo.transform;
             choicesContainer.anchorMin = new Vector2(0, 0);
             choicesContainer.anchorMax = new Vector2(1, 0);
             choicesContainer.pivot = new Vector2(0.5f, 0);
             choicesContainer.offsetMin = new Vector2(8, InputRowHeight + StatusBarHeight);
-            choicesContainer.offsetMax = new Vector2(-8, InputRowHeight + StatusBarHeight + ChoicesRowHeight);
+            choicesContainer.offsetMax = new Vector2(-8, InputRowHeight + StatusBarHeight);   // 初始零高，ContentSizeFitter 自动撑开
 
-            var hlg = rowGo.GetComponent<HorizontalLayoutGroup>();
-            hlg.spacing = 8;
-            hlg.padding = new RectOffset(0, 0, 6, 6);
-            hlg.childAlignment = TextAnchor.MiddleCenter;
-            hlg.childControlWidth = true;
-            hlg.childControlHeight = true;
-            hlg.childForceExpandWidth = true;
-            hlg.childForceExpandHeight = true;
+            var vlg = rowGo.GetComponent<VerticalLayoutGroup>();
+            vlg.spacing = 6;
+            vlg.padding = new RectOffset(16, 16, 6, 6);
+            vlg.childAlignment = TextAnchor.UpperLeft;
+            vlg.childControlWidth = true;
+            vlg.childControlHeight = true;
+            vlg.childForceExpandWidth = true;
+            vlg.childForceExpandHeight = false;
+
+            var csf = rowGo.GetComponent<ContentSizeFitter>();
+            csf.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+            csf.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
         }
 
         private void RefreshChoices(IReadOnlyList<LlmReply.Choice> choices)
         {
+            Log.Info(Log.Channels.UI, $"[Timing] RefreshChoices activeSlot={(_activeSlot != null ? "yes" : "no")} IsDone={(_activeSlot?.IsDone ?? false)} t={Time.unscaledTime:F3} lastDone={_lastDoneTime:F3}");
             // 在打字机期间 buffer 住 choices，等 active block 完成后在 OnSlotDone 里消费
             if (_activeSlot != null && !_activeSlot.IsDone)
             {
@@ -240,6 +247,7 @@ namespace ACLS.UI
 
         private void ApplyChoices(IReadOnlyList<LlmReply.Choice> choices)
         {
+            Log.Info(Log.Channels.UI, $"[Timing] ApplyChoices t={Time.unscaledTime:F3} lastDone={_lastDoneTime:F3} diff={(Time.unscaledTime - _lastDoneTime):F3}s count={choices?.Count ?? 0}");
             // Always tear down the old buttons first, so a (null / empty) new
             // payload clears any leftover label from the previous turn instead
             // of leaving orphan Text children on screen.
@@ -249,9 +257,9 @@ namespace ACLS.UI
 
             if (choices == null || choices.Count == 0)
             {
-                // Hide the whole row when there are no options — otherwise the
-                // placeholder area would still take vertical space.
                 choicesContainer.gameObject.SetActive(false);
+                if (_scrollRt != null)
+                    _scrollRt.offsetMin = new Vector2(8, InputRowHeight + StatusBarHeight + 8);
                 return;
             }
             choicesContainer.gameObject.SetActive(true);
@@ -260,17 +268,37 @@ namespace ACLS.UI
             {
                 int index = i;
                 var label = choices[i].Label;
-                var btn = UiKit.CreateButton(choicesContainer, "Choice", label, () => OnChoiceClicked(index));
+                string prefix = ((char)('A' + i)).ToString() + ". ";
+                var btn = UiKit.CreateButton(choicesContainer, "Choice", prefix + label, () => OnChoiceClicked(index));
+                var le = btn.gameObject.AddComponent<LayoutElement>();
+                le.minHeight = 36f;
+                le.preferredHeight = 36f;
+                var labelTmp = btn.GetComponentInChildren<TextMeshProUGUI>();
+                if (labelTmp != null)
+                {
+                    labelTmp.enableWordWrapping = true;
+                    labelTmp.alignment = TextAlignmentOptions.Left;
+                }
                 choiceButtons.Add(btn);
             }
 
             bool active = bridge.Ready && !bridge.Busy;
             foreach (var b in choiceButtons) b.interactable = active;
+
+            // 强制重建布局让 ContentSizeFitter 撑开容器高度，然后更新滚动区域
+            Canvas.ForceUpdateCanvases();
+            float containerHeight = choicesContainer.rect.height;
+            if (_scrollRt != null)
+                _scrollRt.offsetMin = new Vector2(8, InputRowHeight + StatusBarHeight + containerHeight + 8);
         }
 
         private void OnChoiceClicked(int index)
         {
             if (bridge == null || !bridge.Ready || bridge.Busy) return;
+            // 点击后立即隐藏选项
+            choicesContainer.gameObject.SetActive(false);
+            if (_scrollRt != null)
+                _scrollRt.offsetMin = new Vector2(8, InputRowHeight + StatusBarHeight + 8);
             bridge.Choose(index);
         }
 
@@ -527,9 +555,11 @@ namespace ACLS.UI
 
         private void OnBlockFinished()
         {
+            float blockDoneTime = Time.unscaledTime;
+            Log.Info(Log.Channels.UI, $"[Timing] OnBlockFinished blockDone={blockDoneTime:F3} hasPending={_pendingChoicesToShow != null}");
             _activeBlock = null;
             _activeSlot = null;
-            _lastDoneTime = Time.unscaledTime;
+            _lastDoneTime = blockDoneTime;
             ScrollToBottom();
 
             // Flush buffered choices if any arrived during the active block
@@ -537,6 +567,9 @@ namespace ACLS.UI
             {
                 var toShow = _pendingChoicesToShow;
                 _pendingChoicesToShow = null;
+                float flushAt = Time.unscaledTime;
+                float gap = flushAt - blockDoneTime;
+                Log.Info(Log.Channels.UI, $"[Timing] ===> Choice-shown gap: {gap:F3}s after block done. (count={toShow?.Count ?? 0})");
                 ApplyChoices(toShow);
             }
 
