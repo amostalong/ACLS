@@ -62,6 +62,8 @@ namespace ACLS.Authoring
         // ---- internal ----
         private CancellationTokenSource lifetimeCts;
         private CancellationTokenSource currentCts;
+        private CancellationTokenSource currentEffectsCts;   // tracks the in-flight effects-only LLM call so the next SendAction can cancel it (fire-and-forget).
+        private readonly object effectsCtsLock = new object();
         private LlmUsage cumulativeUsage;
         private int callCount;
         private string currentThinking = "";
@@ -105,11 +107,29 @@ namespace ACLS.Authoring
             try { currentCts?.Cancel(); } catch { }
             currentCts?.Dispose();
             currentCts = null;
+            CancelEffectsInFlight();
         }
 
         public void CancelCurrent()
         {
             try { currentCts?.Cancel(); } catch { }
+            CancelEffectsInFlight();
+        }
+
+        // Cancels and disposes any in-flight effects-only LLM call.
+        // The background task observes the token, drops the parsed result
+        // (no ApplyEffects, no events), and exits. Safe to call from any thread.
+        private void CancelEffectsInFlight()
+        {
+            CancellationTokenSource toCancel = null;
+            lock (effectsCtsLock)
+            {
+                toCancel = currentEffectsCts;
+                currentEffectsCts = null;
+            }
+            if (toCancel == null) return;
+            try { toCancel.Cancel(); } catch { }
+            try { toCancel.Dispose(); } catch { }
         }
 
         // ---- state transitions ----
@@ -686,6 +706,11 @@ namespace ACLS.Authoring
                 return;
             }
 
+            // Cancel any in-flight effects-only call from the previous turn so
+            // its stale result doesn't land in the world after the player has
+            // already moved on. The background task observes the token and exits.
+            CancelEffectsInFlight();
+
             Log.Info(Log.Channels.Llm, "▶ SendAction: userInput={0} displayText={1} addToHistory={2}",
                 Truncate(userInput ?? "", 80), Truncate(displayText ?? "", 80), addToHistory);
 
@@ -741,41 +766,29 @@ namespace ACLS.Authoring
                         return;
                     }
 
-                    DialogueResult result;
-                    if (ShouldRequestEffectsForStagePlay(userInput, effectTag))
-                    {
-                        string effectsPrompt = PromptAssembler?.AssembleEffectsOnly(CurrentState.StateType, userInput, narration) ?? "";
-                        var effectsResp = await CompleteEffectsOnly(effectsPrompt, messages, thisCts.Token);
-                        TrackUsageSilent(effectsResp.Usage);
-
-                        LlmReply effectsReply = null;
-                        if (!LlmReply.TryParseEffectsOnly(effectsResp.Content, out effectsReply, out var effectsError))
-                        {
-                            // Degrade gracefully: narration + choices are still valid.
-                            // The state is mutated by the narration call, but local data
-                            // (stats/opinions/gold) just won't change this turn. Log the
-                            // raw response so the operator can see what the LLM returned.
-                            Log.Warn(Log.Channels.Llm,
-                                "effects 解析失败，降级使用空 effects：{0} | rawLen={1} | content前200={2}",
-                                effectsError,
-                                effectsResp.Content?.Length ?? 0,
-                                Truncate(effectsResp.Content ?? "", 200));
-                            result = BuildNarrationTextResult(narrationResp.Content, narration, choices, null);
-                        }
-                        else
-                        {
-                            result = BuildNarrationTextResult(narrationResp.Content, narration, choices, effectsReply);
-                        }
-                    }
-                    else
-                    {
-                        result = BuildNarrationTextResult(narrationResp.Content, narration, choices, null);
-                    }
+                    // Publish narration + choices NOW with empty effects so the
+                    // UI can show the options immediately. The effects-only LLM
+                    // call runs in the background; its result (when it lands)
+                    // mutates the world and emits OnEffects for the yellow meta
+                    // line. Players no longer wait 8-17s for choices to appear.
+                    var result = BuildNarrationTextResult(narrationResp.Content, narration, choices, null);
 
                     var swHandle = System.Diagnostics.Stopwatch.StartNew();
                     HandleResult(CurrentState, result);
                     swHandle.Stop();
-                    Log.Info(Log.Channels.Llm, "[Timing] HandleResult: {0:F2}s, 总耗时: {1:F2}s", swHandle.Elapsed.TotalSeconds, swTotal.Elapsed.TotalSeconds);
+                    Log.Info(Log.Channels.Llm, "[Timing] HandleResult: {0:F2}s, 总耗时: {1:F2}s",
+                        swHandle.Elapsed.TotalSeconds, swTotal.Elapsed.TotalSeconds);
+
+                    // Kick off effects in the background. We pass a fresh List
+                    // copy of `messages` so the fire-and-forget task keeps its
+                    // own reference (the local `messages` would be GC'd once
+                    // SendAction returns).
+                    if (ShouldRequestEffectsForStagePlay(userInput, effectTag))
+                    {
+                        var messagesCopy = new List<ChatMessage>(messages);
+                        _ = RunEffectsInBackgroundAsync(narrationPrompt, messagesCopy,
+                            narrationResp.Content, narration, choices, userInput);
+                    }
                     return;
                 }
             }
@@ -801,6 +814,80 @@ namespace ACLS.Authoring
         }
 
         // ---- internal ----
+
+        // Fire-and-forget effects-only call. Runs in the background after the
+        // narration + choices have already been published to the UI, so the
+        // player can act on the new options without waiting 8-17s for the
+        // bookkeeping LLM call to finish.
+        //
+        // Cancellation contract:
+        //   * CancelEffectsInFlight() (called from SendAction's entry and
+        //     Dispose / CancelCurrent) signals via the registered token.
+        //   * When cancelled mid-flight, the parsed result is discarded —
+        //     ApplyEffects is NOT called, OnEffects is NOT emitted, and the
+        //     world state remains as it was before this turn's effects.
+        //   * On normal completion, the parsed effects are applied via the
+        //     EffectRouter and OnEffects fires (so the chat panel can paint
+        //     the yellow "数据" line for this turn).
+        private async Task RunEffectsInBackgroundAsync(
+            string narrationPrompt, List<ChatMessage> messages,
+            string rawNarrationResponse, string narration,
+            List<LlmReply.Choice> choices, string userInput)
+        {
+            CancellationTokenSource effectsCts;
+            lock (effectsCtsLock)
+            {
+                effectsCts = new CancellationTokenSource();
+                currentEffectsCts = effectsCts;
+            }
+
+            try
+            {
+                string effectsPrompt = PromptAssembler?.AssembleEffectsOnly(CurrentState.StateType, userInput, narration) ?? "";
+                var effectsResp = await CompleteEffectsOnly(effectsPrompt, messages, effectsCts.Token);
+                TrackUsageSilent(effectsResp.Usage);
+
+                if (effectsCts.IsCancellationRequested) return;  // lost the race — drop result
+
+                LlmReply effectsReply = null;
+                if (!LlmReply.TryParseEffectsOnly(effectsResp.Content, out effectsReply, out var effectsError))
+                {
+                    Log.Warn(Log.Channels.Llm,
+                        "background effects 解析失败，跳过本轮数据落地：{0} | rawLen={1} | content前200={2}",
+                        effectsError,
+                        effectsResp.Content?.Length ?? 0,
+                        Truncate(effectsResp.Content ?? "", 200));
+                    return;
+                }
+
+                // Apply effects via the same path HandleResult uses for narration turn effects.
+                var effectsResult = BuildNarrationTextResult(rawNarrationResponse, narration, choices, effectsReply);
+                // Re-check cancellation right before mutating world state so a
+                // mid-flight SendAction's CancelEffectsInFlight() doesn't apply
+                // stale effects after the player has already moved on.
+                if (effectsCts.IsCancellationRequested) return;
+                if (CurrentState != null)
+                    CurrentState.ApplyEffects(effectsResult);
+                OnEffects?.Invoke(effectsResult.Effects);
+            }
+            catch (OperationCanceledException)
+            {
+                // Cancelled by SendAction's CancelEffectsInFlight() — silent exit.
+            }
+            catch (Exception ex)
+            {
+                Log.Error(Log.Channels.Llm, "background effects 调用失败: {0}", ex.Message);
+            }
+            finally
+            {
+                lock (effectsCtsLock)
+                {
+                    if (currentEffectsCts == effectsCts)
+                        currentEffectsCts = null;
+                }
+                effectsCts.Dispose();
+            }
+        }
 
         private void SetThinking(string thinking)
         {
