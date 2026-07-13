@@ -1,5 +1,11 @@
 /.vsconfig
 
+# Locus agent metadata (in parent of repo)
+../.harness/
+
+# Locus-generated IDE analyzer config (contains local paths, must not be shared)
+Directory.Build.props
+
 # LLM 配置含 API key，不入库
 Assets/Content/Config/LlmConfig.asset
 Assets/Content/Config/LlmConfig.asset.meta
