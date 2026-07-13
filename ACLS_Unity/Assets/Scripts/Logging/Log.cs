@@ -106,6 +106,9 @@ namespace ACLS.Logging
         }
 
         // ──── 写入方法 ────
+        // 颜色参数为可选 hex（如 "#5fd95f"）或 null，传入时会把 message 包裹在
+        // <color=...>…</color> 里，使 Unity Console 以指定颜色渲染。
+        // 颜色不会写入 RuntimeLogger 文本文件（避免干扰 grep），仅在 Console 中生效。
 
         public static void Debug(string channel, string message) =>
             Write(LogLevel.Debug, channel, message);
@@ -131,6 +134,41 @@ namespace ACLS.Logging
         public static void Error(string channel, string format, params object[] args) =>
             Write(LogLevel.Error, channel, string.Format(format, args));
 
+        // ──── 彩色重载（仅 Console 着色，不影响 RuntimeLogger 文本文件） ────
+        // 须显式传 hex 颜色，如 Log.InfoColored(Channels.Network, Colors.LlmIO, "...")。
+        // 为了避免与原 Debug/Info/Warn/Error 重载歧义，color 参数必须是 string 显式变量。
+
+        public static void DebugColored(string channel, string color, string message) =>
+            WriteColored(LogLevel.Debug, channel, message, color);
+
+        public static void DebugColored(string channel, string color, string format, params object[] args) =>
+            WriteColored(LogLevel.Debug, channel, string.Format(format, args), color);
+
+        public static void InfoColored(string channel, string color, string message) =>
+            WriteColored(LogLevel.Info, channel, message, color);
+
+        public static void InfoColored(string channel, string color, string format, params object[] args) =>
+            WriteColored(LogLevel.Info, channel, string.Format(format, args), color);
+
+        public static void WarnColored(string channel, string color, string message) =>
+            WriteColored(LogLevel.Warn, channel, message, color);
+
+        public static void WarnColored(string channel, string color, string format, params object[] args) =>
+            WriteColored(LogLevel.Warn, channel, string.Format(format, args), color);
+
+        public static void ErrorColored(string channel, string color, string message) =>
+            WriteColored(LogLevel.Error, channel, message, color);
+
+        public static void ErrorColored(string channel, string color, string format, params object[] args) =>
+            WriteColored(LogLevel.Error, channel, string.Format(format, args), color);
+
+        // 预设颜色常量——避免调用方零散地写 hex。
+        public static class Colors
+        {
+            public const string LlmIO      = "#5fd95f";  // 亮绿：LLM 输入/输出
+            public const string LlmIODim   = "#3a8a3a";  // 暗绿：响应摘要等
+        }
+
         // ──── 内部实现 ────
 
         private static void Write(LogLevel level, string channel, string message)
@@ -148,27 +186,51 @@ namespace ACLS.Logging
             // （RuntimeLogger 通过 logMessageReceivedThreaded 捕获写文件，不受影响）
             if (_mainContext != null && SynchronizationContext.Current != _mainContext)
             {
-                _mainContext.Post(_ => LogToUnityConsole(level, formatted), null);
+                _mainContext.Post(_ => LogToUnityConsole(level, formatted, null), null);
                 return;
             }
 
-            LogToUnityConsole(level, formatted);
+            LogToUnityConsole(level, formatted, null);
+        }
+
+        private static void WriteColored(LogLevel level, string channel, string message, string color)
+        {
+            if (!IsEnabled(channel, level)) return;
+            if (string.IsNullOrEmpty(color)) { Write(level, channel, message); return; }
+
+            string prefix = channel.IndexOf('[') < 0
+                ? $"[{channel}]"
+                : channel;
+            string formatted = $"{prefix} {message}";
+
+            if (_mainContext != null && SynchronizationContext.Current != _mainContext)
+            {
+                _mainContext.Post(_ => LogToUnityConsole(level, formatted, color), null);
+                return;
+            }
+
+            LogToUnityConsole(level, formatted, color);
         }
 
         /// <summary>实际调用 Unity Debug 系列 API。主线程/分发目标执行。</summary>
-        private static void LogToUnityConsole(LogLevel level, string formatted)
+        private static void LogToUnityConsole(LogLevel level, string formatted, string color)
         {
+            // 颜色仅在 Console 中生效；传入的颜色包裹在 message 内部。
+            // 颜色包含 <…> 括号——RuntimeLogger 写文件时会按原文写入（含颜色标签），
+            // 写文件前的清洗/过滤在 RuntimeLogger 内部处理，此处不处理。
+            string outMessage = string.IsNullOrEmpty(color) ? formatted : $"<color={color}>{formatted}</color>";
+
             switch (level)
             {
                 case LogLevel.Debug:
                 case LogLevel.Info:
-                    UnityEngine.Debug.Log(formatted);
+                    UnityEngine.Debug.Log(outMessage);
                     break;
                 case LogLevel.Warn:
-                    UnityEngine.Debug.LogWarning(formatted);
+                    UnityEngine.Debug.LogWarning(outMessage);
                     break;
                 case LogLevel.Error:
-                    UnityEngine.Debug.LogError(formatted);
+                    UnityEngine.Debug.LogError(outMessage);
                     break;
             }
         }

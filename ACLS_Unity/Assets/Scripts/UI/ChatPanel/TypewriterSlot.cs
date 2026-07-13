@@ -107,7 +107,7 @@ namespace ACLS.UI
                 {
                     _display.text = _header + "\n" + target;
                     _done = true;
-                    Log.Info(Log.Channels.UI, "[Typewriter] 打字完成: shown={0}", _shown);
+                    Log.Debug(Log.Channels.UI, "[Typewriter] 打字完成: shown={0}", _shown);
                     var d = OnDone;
                     OnDone = null;
                     d?.Invoke(this);

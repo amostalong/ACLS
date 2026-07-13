@@ -1,5 +1,6 @@
 using System.Threading;
 using System.Threading.Tasks;
+using ACLS.Logging;
 using ACLS.Sim;
 using Newtonsoft.Json.Linq;
 
@@ -48,8 +49,11 @@ namespace ACLS.Llm.Tools
                 var args = JObject.Parse(argsJson ?? "{}");
                 layer = (string)args["layer"] ?? "";
             }
-            catch
+            catch (System.Exception ex)
             {
+                Log.Warn(Log.Channels.Llm,
+                    "[ReadWorldLayerTool] 参数解析失败 | argsJson={0} | ex={1}",
+                    TruncateForLog(argsJson, 200), ex.GetType().Name);
                 return Task.FromResult("参数解析失败，请提供 layer（层级）。");
             }
 
@@ -69,5 +73,8 @@ namespace ACLS.Llm.Tools
 
             return Task.FromResult(result);
         }
+
+        private static string TruncateForLog(string s, int n) =>
+            s == null ? "" : s.Length <= n ? s : s.Substring(0, n) + "…";
     }
 }

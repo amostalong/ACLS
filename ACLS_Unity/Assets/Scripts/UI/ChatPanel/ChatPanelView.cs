@@ -224,7 +224,7 @@ namespace ACLS.UI
 
         private void RefreshChoices(IReadOnlyList<LlmReply.Choice> choices)
         {
-            Log.Info(Log.Channels.UI, $"[Timing] RefreshChoices activeSlot={(_activeSlot != null ? "yes" : "no")} IsDone={(_activeSlot?.IsDone ?? false)} t={Time.unscaledTime:F3} lastDone={_lastDoneTime:F3}");
+            Log.Debug(Log.Channels.UI, $"[Timing] RefreshChoices activeSlot={(_activeSlot != null ? "yes" : "no")} IsDone={(_activeSlot?.IsDone ?? false)} t={Time.unscaledTime:F3} lastDone={_lastDoneTime:F3}");
             // 在打字机期间 buffer 住 choices，等 active block 完成后在 OnSlotDone 里消费
             if (_activeSlot != null && !_activeSlot.IsDone)
             {
@@ -247,7 +247,7 @@ namespace ACLS.UI
 
         private void ApplyChoices(IReadOnlyList<LlmReply.Choice> choices)
         {
-            Log.Info(Log.Channels.UI, $"[Timing] ApplyChoices t={Time.unscaledTime:F3} lastDone={_lastDoneTime:F3} diff={(Time.unscaledTime - _lastDoneTime):F3}s count={choices?.Count ?? 0}");
+            Log.Debug(Log.Channels.UI, $"[Timing] ApplyChoices t={Time.unscaledTime:F3} lastDone={_lastDoneTime:F3} diff={(Time.unscaledTime - _lastDoneTime):F3}s count={choices?.Count ?? 0}");
             // Always tear down the old buttons first, so a (null / empty) new
             // payload clears any leftover label from the previous turn instead
             // of leaving orphan Text children on screen.
@@ -556,7 +556,7 @@ namespace ACLS.UI
         private void OnBlockFinished()
         {
             float blockDoneTime = Time.unscaledTime;
-            Log.Info(Log.Channels.UI, $"[Timing] OnBlockFinished blockDone={blockDoneTime:F3} hasPending={_pendingChoicesToShow != null}");
+            Log.Debug(Log.Channels.UI, $"[Timing] OnBlockFinished blockDone={blockDoneTime:F3} hasPending={_pendingChoicesToShow != null}");
             _activeBlock = null;
             _activeSlot = null;
             _lastDoneTime = blockDoneTime;
@@ -569,7 +569,7 @@ namespace ACLS.UI
                 _pendingChoicesToShow = null;
                 float flushAt = Time.unscaledTime;
                 float gap = flushAt - blockDoneTime;
-                Log.Info(Log.Channels.UI, $"[Timing] ===> Choice-shown gap: {gap:F3}s after block done. (count={toShow?.Count ?? 0})");
+                Log.Debug(Log.Channels.UI, $"[Timing] ===> Choice-shown gap: {gap:F3}s after block done. (count={toShow?.Count ?? 0})");
                 ApplyChoices(toShow);
             }
 

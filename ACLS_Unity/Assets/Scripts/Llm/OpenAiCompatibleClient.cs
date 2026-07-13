@@ -55,7 +55,7 @@ namespace ACLS.Llm
                 bodyObj["response_format"] = new JObject { ["type"] = "json_object" };
 
             string json = bodyObj.ToString(Formatting.None);
-            if (verbose) Log.Info(Log.Channels.Network, "[OpenAI] → {0}", Truncate(json, 300));
+            if (verbose) Log.InfoColored(Log.Channels.Network, Log.Colors.LlmIO, "[OpenAI] → {0}", Truncate(json, 300));
 
             return await SendOpenAi(json, ct);
         }
@@ -81,7 +81,7 @@ namespace ACLS.Llm
                 bodyObj["response_format"] = new JObject { ["type"] = "json_object" };
 
             string json = bodyObj.ToString(Formatting.None);
-            if (verbose) Log.Info(Log.Channels.Network, "[OpenAI] → {0}", Truncate(json, 600));
+            if (verbose) Log.InfoColored(Log.Channels.Network, Log.Colors.LlmIO, "[OpenAI] → {0}", Truncate(json, 600));
 
             return await StreamOpenAi(json, onTextDelta, ct);
         }
@@ -112,7 +112,7 @@ namespace ACLS.Llm
                 bodyObj["tools"] = BuildOpenAiTools(tools);
 
             string json = bodyObj.ToString(Formatting.None);
-            if (verbose) Log.Info(Log.Channels.Network, "[OpenAI] → (tools={0}) {1}", tools?.Count ?? 0, Truncate(json, 300));
+            if (verbose) Log.InfoColored(Log.Channels.Network, Log.Colors.LlmIO, "[OpenAI] → (tools={0}) {1}", tools?.Count ?? 0, Truncate(json, 300));
 
             return await StreamOpenAi(json, onTextDelta, ct);
         }
@@ -136,7 +136,7 @@ namespace ACLS.Llm
             if (!resp.IsSuccessStatusCode)
             {
                 string err = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
-                if (verbose) Log.Info(Log.Channels.Network, "[OpenAI] ← {0} {1}", (int)resp.StatusCode, Truncate(err, 300));
+                if (verbose) Log.InfoColored(Log.Channels.Network, Log.Colors.LlmIO, "[OpenAI] ← {0} {1}", (int)resp.StatusCode, Truncate(err, 300));
                 LlmDebugLog.Add("OpenAI", requestJson, err);
                 throw new HttpRequestException($"OpenAI 兼容 {(int)resp.StatusCode}: {Truncate(err, 500)}");
             }
@@ -163,7 +163,7 @@ namespace ACLS.Llm
                 if (firstChunk)
                 {
                     firstChunk = false;
-                    Log.Info(Log.Channels.Network, "[OpenAI] TTFT: {0:F2}s", swTotal.Elapsed.TotalSeconds);
+                    Log.InfoColored(Log.Channels.Network, Log.Colors.LlmIO, "[OpenAI] TTFT: {0:F2}s", swTotal.Elapsed.TotalSeconds);
                 }
 
                 try
@@ -207,7 +207,36 @@ namespace ACLS.Llm
 
                                 string args = (string)func["arguments"] ?? "";
                                 if (!string.IsNullOrEmpty(args))
-                                    toolCallAccum[idx].Args += args;
+                                {
+                                    // Smart merge: DeepSeek-style providers emit the
+                                    // complete JSON object in the first delta, then
+                                    // occasionally resend it, which double-encodes
+                                    // (`{}` + `{"layer":"L2"}` → `{}{"layer":...}`).
+                                    // Detect a fully-formed JSON object and replace,
+                                    // otherwise append (OpenAI character-delta protocol).
+                                    //
+                                    // Additional case: DeepSeek streams a `{}`
+                                    // placeholder first, then the real payload in
+                                    // later deltas. The two pieces concatenated
+                                    // (`{}` + `{"layer":"L4"}`) are not a valid
+                                    // JSON object, so the simple TryParseFullJsonObject
+                                    // check fails and the broken merge is appended.
+                                    // Detect a placeholder-only accumulator and
+                                    // overwrite instead of appending in that case.
+                                    if (TryParseFullJsonObject(args, out _))
+                                    {
+                                        toolCallAccum[idx].Args = args;
+                                    }
+                                    else if (System.Text.RegularExpressions.Regex.IsMatch(
+                                        toolCallAccum[idx].Args ?? "", @"^\s*(\{\}\s*)+$"))
+                                    {
+                                        toolCallAccum[idx].Args = args;
+                                    }
+                                    else
+                                    {
+                                        toolCallAccum[idx].Args += args;
+                                    }
+                                }
                             }
                         }
                     }
@@ -247,7 +276,7 @@ namespace ACLS.Llm
             };
 
             swTotal.Stop();
-            Log.Info(Log.Channels.Network, "[OpenAI] ← {0} chars tools={1} | {2:F2}s total, {3} chunks",
+            Log.InfoColored(Log.Channels.Network, Log.Colors.LlmIO, "[OpenAI] ← {0} chars tools={1} | {2:F2}s total, {3} chunks",
                 result.Content.Length, toolCalls.Count, swTotal.Elapsed.TotalSeconds, chunkCount);
 
             return result;
@@ -265,7 +294,7 @@ namespace ACLS.Llm
             using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
             string respText = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
 
-            if (verbose) Log.Info(Log.Channels.Network, "[OpenAI] ← {0} {1}", (int)resp.StatusCode, Truncate(respText, 300));
+            if (verbose) Log.InfoColored(Log.Channels.Network, Log.Colors.LlmIO, "[OpenAI] ← {0} {1}", (int)resp.StatusCode, Truncate(respText, 300));
             LlmDebugLog.Add("OpenAI", requestJson, respText);
 
             if (!resp.IsSuccessStatusCode)
@@ -354,31 +383,36 @@ namespace ACLS.Llm
 
                     case ChatRole.ToolCall:
                         // OpenAI: tool_calls go inside the assistant message
-                        // Find the last assistant message and add tool_calls to it
-                        if (result.Count > 0 && (string)result.Last["role"] == "assistant")
+                        // Ensure there is an assistant message to attach to —
+                        // either reuse the previous one or create a new one.
+                        // (The orchestrator may have skipped emitting an assistant
+                        // text message when raw.Length==0, but tool_calls still
+                        // need a parent assistant message per the protocol.)
+                        if (result.Count == 0 || (string)result.Last["role"] != "assistant")
                         {
-                            var last = (JObject)result.Last;
-                            var tcArr = last["tool_calls"] as JArray;
-                            if (tcArr == null)
-                            {
-                                tcArr = new JArray();
-                                last["tool_calls"] = tcArr;
-                            }
-                            JObject input;
-                            try { input = JObject.Parse(msg.Content); }
-                            catch { input = new JObject(); }
-
-                            tcArr.Add(new JObject
-                            {
-                                ["id"] = msg.ToolCallId,
-                                ["type"] = "function",
-                                ["function"] = new JObject
-                                {
-                                    ["name"] = msg.ToolName,
-                                    ["arguments"] = msg.Content,
-                                }
-                            });
+                            result.Add(new JObject { ["role"] = "assistant", ["content"] = "" });
                         }
+                        var last = (JObject)result.Last;
+                        var tcArr = last["tool_calls"] as JArray;
+                        if (tcArr == null)
+                        {
+                            tcArr = new JArray();
+                            last["tool_calls"] = tcArr;
+                        }
+                        JObject input;
+                        try { input = JObject.Parse(msg.Content); }
+                        catch { input = new JObject(); }
+
+                        tcArr.Add(new JObject
+                        {
+                            ["id"] = msg.ToolCallId,
+                            ["type"] = "function",
+                            ["function"] = new JObject
+                            {
+                                ["name"] = msg.ToolName,
+                                ["arguments"] = msg.Content,
+                            }
+                        });
                         break;
 
                     case ChatRole.ToolResult:
@@ -414,6 +448,23 @@ namespace ACLS.Llm
                 });
             }
             return arr;
+        }
+
+        private static bool TryParseFullJsonObject(string s, out Newtonsoft.Json.Linq.JObject obj)
+        {
+            obj = null;
+            if (string.IsNullOrWhiteSpace(s)) return false;
+            string trimmed = s.TrimStart();
+            if (trimmed.Length == 0 || trimmed[0] != '{') return false;
+            try
+            {
+                obj = Newtonsoft.Json.Linq.JObject.Parse(trimmed);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static string Truncate(string s, int max) =>

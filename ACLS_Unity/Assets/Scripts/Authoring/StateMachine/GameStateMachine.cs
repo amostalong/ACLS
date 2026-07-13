@@ -88,6 +88,8 @@ namespace ACLS.Authoring
                     break;
                 case GameState.Dialogue:
                     builder.Append(Prompts.GetFragment(FragmentFor(CurrentSubState)));
+                    // 时代大势(主线)实时上下文 — 始终拼上(Planning/FreeNarrative 时最有价值)
+                    builder.Append(Prompts.BuildEraTrendContext());
                     break;
             }
 

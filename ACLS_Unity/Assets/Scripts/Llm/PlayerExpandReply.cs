@@ -36,6 +36,9 @@ namespace ACLS.Llm
         {
             public string Title = "";
             public string Summary = "";
+            public string Status = "";       // 🔴|🟠|🟡|🟢
+            public string CurrentState = "";  // 当前状态一句话
+            public string NextBeat = "";      // 下一拍一句话
             public List<string> InvolvedNpcs = new();
             public List<string> InvolvedItems = new();
             public List<string> InvolvedLocations = new();
@@ -126,6 +129,9 @@ namespace ACLS.Llm
                     {
                         Title = title,
                         Summary = ((string)(sl["su"] ?? sl["summary"]) ?? "").Trim(),
+                        Status = ((string)(sl["st"] ?? sl["status"]) ?? "").Trim(),
+                        CurrentState = ((string)(sl["cs"] ?? sl["current_state"]) ?? "").Trim(),
+                        NextBeat = ((string)(sl["nb"] ?? sl["next_beat"]) ?? "").Trim(),
                         Hook = ((string)(sl["hk"] ?? sl["hook"]) ?? "").Trim(),
                         KeyTimePoint = ((string)(sl["ktp"] ?? sl["key_time_point"]) ?? "").Trim(),
                     };
@@ -198,7 +204,9 @@ namespace ACLS.Llm
                 sb.AppendLine("\n[活跃故事线]");
                 foreach (var sl in Storylines)
                 {
-                    sb.AppendLine($"· {sl.Title}：{sl.Summary}");
+                    sb.AppendLine($"· {sl.Status} {sl.Title}：{sl.Summary}");
+                    if (!string.IsNullOrWhiteSpace(sl.CurrentState)) sb.AppendLine($"  当前：{sl.CurrentState}");
+                    if (!string.IsNullOrWhiteSpace(sl.NextBeat)) sb.AppendLine($"  下一拍：{sl.NextBeat}");
                     if (sl.InvolvedNpcs.Count > 0)
                         sb.AppendLine($"  涉及人物：{string.Join("、", sl.InvolvedNpcs)}");
                     if (sl.InvolvedItems.Count > 0)
