@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 using System.Text.RegularExpressions;
+using ACLS.Logging;
 
 namespace ACLS.Llm
 {
@@ -96,22 +98,42 @@ namespace ACLS.Llm
                 int inlineDelimIdx = FindLooseDelimiterIndex(text);
                 if (inlineDelimIdx < 0)
                 {
-                    error = "未找到选项分隔线 ---";
-                    return false;
+                    // Last resort: treat the whole response as narration (no choices).
+                    // The 0-choices fallback below will inject the default option.
+                    narration = text;
+                    choiceSection = "";
+                    ACLS.Logging.Log.Warn(ACLS.Logging.Log.Channels.LlmReply,
+                        "[NarrationParser] 未找到分隔线 | 原文长度={0} | 全部作为 narration + 注入默认选项",
+                        narration.Length);
                 }
-                narration = text.Substring(0, inlineDelimIdx).Trim();
-                choiceSection = text.Substring(inlineDelimIdx).TrimStart('-', '—', ' ').Trim();
+                else
+                {
+                    narration = text.Substring(0, inlineDelimIdx).Trim();
+                    choiceSection = text.Substring(inlineDelimIdx).TrimStart('-', '—', ' ').Trim();
+                }
             }
 
             if (string.IsNullOrWhiteSpace(narration))
             {
-                error = "旁白正文为空";
-                return false;
+                // Last-resort fallback: use the raw text (truncated) as narration
+                // so the UI isn't blank when LLM forgot to emit any separator at all.
+                string fallback = text ?? "";
+                if (fallback.Length > 200) fallback = fallback.Substring(0, 200) + "…";
+                narration = fallback;
+                if (string.IsNullOrWhiteSpace(narration))
+                {
+                    error = "旁白正文为空";
+                    return false;
+                }
+                ACLS.Logging.Log.Warn(ACLS.Logging.Log.Channels.LlmReply,
+                    "[NarrationParser] 未找到分隔线 | 使用原文前 {0} 字作为旁白",
+                    narration.Length);
             }
             if (string.IsNullOrWhiteSpace(choiceSection))
             {
-                error = "选项区为空";
-                return false;
+                // No delimiter at all → no choice section to parse. Synthesize one
+                // with the default "继续故事" option; the loop below will fall through.
+                choiceSection = "";
             }
 
             string[] lines = choiceSection.Split('\n');
@@ -151,8 +173,20 @@ namespace ACLS.Llm
 
             if (choices.Count == 0)
             {
-                error = "未解析到任何选项";
-                return false;
+                // Fallback: LLM 返回了旁白正文但漏写了选项 / 分隔线。
+                // 注入一个默认「继续故事」选项，让玩家能继续推进而不是卡死。
+                // 严格模式仍保留 error 字段供上游诊断。
+                error = "未解析到任何选项（已注入默认「继续故事」）";
+                ACLS.Logging.Log.Warn(ACLS.Logging.Log.Channels.LlmReply,
+                    "[NarrationParser] {0} | narration长度={1} content前100={2}",
+                    error, narration.Length, Truncate(text, 100));
+                choices.Add(new LlmReply.Choice
+                {
+                    Label = "继续故事",
+                    OutcomeNarration = "",
+                    DaysPassed = 0,
+                    Effects = new List<LlmReply.EffectSpec>(),
+                });
             }
 
             if (choices.Count > 4)
@@ -160,6 +194,9 @@ namespace ACLS.Llm
 
             return true;
         }
+
+        private static string Truncate(string s, int n) =>
+            s == null ? "" : s.Length <= n ? s : s.Substring(0, n) + "…";
 
         public static bool TryParse(string raw, out string narration,
             out List<LlmReply.Choice> choices, out string error)
@@ -181,7 +218,32 @@ namespace ACLS.Llm
                 text = text.Trim();
             }
 
+            // 删掉 emoji / 不可打印字符（LLM 常在空白轮返 "🎮" 之类，TMP 字体里缺失会变方块）
+            text = StripEmojiAndControl(text).Trim();
             return text;
+        }
+
+        // 刷除 LLM 输出中偶发的 emoji 和其他控制字符。保留中日韩、ASCII、常见中文/英文标点。
+        private static string StripEmojiAndControl(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return s;
+            var sb = new StringBuilder(s.Length);
+            for (int i = 0; i < s.Length; i++)
+            {
+                int cp = char.ConvertToUtf32(s, i);
+                if (cp > 0xFFFF) i++; // surrogate pair
+                // 控制字符 (除了 \n \r \t)
+                if (cp < 0x20 && cp != '\n' && cp != '\r' && cp != '\t') continue;
+                if (cp == 0x7F) continue; // DEL
+                // 主要 emoji 区间
+                if (cp >= 0x1F300 && cp <= 0x1FAFF) continue;  // emoji blocks (misc symbols, emoticons, transport, etc.)
+                if (cp >= 0x2600 && cp <= 0x27BF) continue;    // misc symbols + dingbats
+                if (cp >= 0x1F000 && cp <= 0x1F02F) continue;  // mahjong tiles
+                if (cp >= 0x1F100 && cp <= 0x1F1FF) continue;  // enclosed alphanumeric supplement (regional indicators)
+                if (cp >= 0x1F200 && cp <= 0x1F2FF) continue;  // enclosed ideographic supplement
+                sb.Append(char.ConvertFromUtf32(cp));
+            }
+            return sb.ToString();
         }
 
         // Fallback: when no standalone "---" line is found, locate the first

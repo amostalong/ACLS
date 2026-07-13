@@ -17,6 +17,8 @@ namespace ACLS.Llm
         public string Thinking = "";
         public string Narration = "";                       // DM 叙事文本
         public string EraName = "";                          // 时代名称，如"东汉末年·中平元年（184年）"
+        // LLM 指定的剧本起始日期（必填）。World.Date 初始为 default(GameDate)，本字段写入后才生效。
+        public Sim.GameDate StartDate = default(Sim.GameDate);
         public string NarrativeStyle = "";                 // 叙事风格，如"近似古典白话小说"
         public string NarrativePerspective = "";           // 叙事视角，如"第一人称"
         public List<string> CognitiveBoundaries = new();   // 认知限制列表
@@ -68,6 +70,20 @@ namespace ACLS.Llm
             result.Thinking = ((string)(obj["th"] ?? obj["thinking"]) ?? "").Trim();
             result.Narration = ((string)(obj["nar"] ?? obj["narration"]) ?? "").Trim();
             result.EraName = ((string)(obj["era"] ?? obj["era_name"]) ?? "").Trim();
+            var sdToken = obj["sd"] ?? obj["start_date"];
+            if (sdToken != null && sdToken.Type != Newtonsoft.Json.Linq.JTokenType.Null)
+            {
+                string sdStr = ((string)sdToken ?? "").Trim();
+                var m = System.Text.RegularExpressions.Regex.Match(sdStr, @"(\d{4})年(\d{1,2})月(\d{1,2})日");
+                if (m.Success)
+                {
+                    int y = int.Parse(m.Groups[1].Value);
+                    int mo = int.Parse(m.Groups[2].Value);
+                    int d = int.Parse(m.Groups[3].Value);
+                    if (y >= 100 && y <= 2200 && mo >= 1 && mo <= 12 && d >= 1 && d <= 31)
+                        result.StartDate = new Sim.GameDate(y, mo, d);
+                }
+            }
             result.NarrativeStyle = ((string)(obj["nst"] ?? obj["narrative_style"]) ?? "").Trim();
             result.NarrativePerspective = ((string)(obj["npe"] ?? obj["narrative_perspective"]) ?? "").Trim();
             result.WorldUndertones = ((string)(obj["wu"] ?? obj["world_undertones"]) ?? "").Trim();
@@ -94,6 +110,12 @@ namespace ACLS.Llm
             if (string.IsNullOrWhiteSpace(result.EraName))
             {
                 error = "era_name 字段缺失或为空";
+                Log.Warn(Log.Channels.WorldBuild, "[WorldBuild] ❌ {0}", error);
+                return false;
+            }
+            if (result.StartDate.Year <= 0)
+            {
+                error = "start_date 字段缺失或解析失败（必须是 4 位年份 + 2 位月日的合法日期）";
                 Log.Warn(Log.Channels.WorldBuild, "[WorldBuild] ❌ {0}", error);
                 return false;
             }

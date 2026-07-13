@@ -116,14 +116,16 @@ namespace ACLS.Authoring
             try
             {
                 // Match 4-digit-year 年 2-digit-month 月 2-digit-day 日
-                var m = System.Text.RegularExpressions.Regex.Match(s.Trim(), @"(\d{1,4})年(\d{1,2})月(\d{1,2})日");
+                var m = System.Text.RegularExpressions.Regex.Match(s.Trim(), @"(\d{4})年(\d{1,2})月(\d{1,2})日");
                 if (m.Success)
                 {
                     int y = int.Parse(m.Groups[1].Value);
                     int mo = int.Parse(m.Groups[2].Value);
                     int d = int.Parse(m.Groups[3].Value);
-                    if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31)
-                        return new Sim.GameDate(y, mo, d);
+                    // 剧本是 184 年，过滤 LLM 凭空捏造的异常年份。
+                    if (y < 100 || y > 2200 || mo < 1 || mo > 12 || d < 1 || d > 31)
+                        return null;
+                    return new Sim.GameDate(y, mo, d);
                 }
             }
             catch { }

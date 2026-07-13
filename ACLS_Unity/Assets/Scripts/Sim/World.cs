@@ -8,7 +8,8 @@ namespace ACLS.Sim
     [Serializable]
     public sealed class World : IWorldReader
     {
-        public GameDate Date = new GameDate(184, 1, 1);
+        // 日期初始为 0,0,0 — 未初始化。世界构建阶段从 LLM 拿到 start_date 后写入。
+        public GameDate Date = default(GameDate);
         public bool Paused = true;
         public int PlayerCharacterId;
         public int Gold = 100;
@@ -39,6 +40,9 @@ namespace ACLS.Sim
 
         // L1-L4 tiered world context built during new-game setup by LLM.
         public WorldStageData Stage = new WorldStageData();
+
+        // 时代大势(主线)运行时状态:阶段名 + 触发锚点 + 前兆注入表。
+        public EraTrendState EraTrend = new EraTrendState();
 
         // Narrative memory as string-JSON. Format: {"entries":[{"date":"...","event":"..."},...]}
         public string MemoryJson = "{}";

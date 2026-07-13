@@ -30,8 +30,15 @@ namespace ACLS.Authoring
                 Effects.ApplyOne(ops[i], world, player);
             }
 
-            // Advance time.
-            if (result.DaysPassed > 0)
+            // 时间推进：优先用 LLM 的绝对 Date，其次用 DaysPassed 逐天 Tick。
+            // DaysPassed > 30 视为 LLM 异常跳跃，丢弃，避免一次推进几月。
+            // world.Date.Year == 0 表示剧本起始日期还未由 LLM 初始化，拒绝推进。
+            if (world == null || world.Date.Year <= 0) return ops.Count > 0;
+            if (result.Date.HasValue && result.Date.Value > world.Date)
+            {
+                world.Date = result.Date.Value;
+            }
+            else if (result.DaysPassed > 0 && result.DaysPassed <= 30)
             {
                 for (int d = 0; d < result.DaysPassed; d++)
                 {
@@ -40,11 +47,7 @@ namespace ACLS.Authoring
                 }
             }
 
-            // 如果 LLM 回复中带了日期，以此为准（覆盖 days_passed 的推进结果）
-            if (result.Date.HasValue)
-                world.Date = result.Date.Value;
-
-            return ops.Count > 0 || result.DaysPassed > 0 || result.Date.HasValue;
+            return ops.Count > 0 || result.Date.HasValue || result.DaysPassed > 0;
         }
 
         // Interprets a suggested state string and returns the matching enum.

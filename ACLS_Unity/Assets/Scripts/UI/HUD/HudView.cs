@@ -104,7 +104,8 @@ namespace ACLS.UI
 
         private void Refresh()
         {
-            if (dateLabel != null) dateLabel.text = world.Date.ToString();
+            if (dateLabel != null)
+                dateLabel.text = world.Date.Year > 0 ? world.Date.ToString() : "—";
             if (statusLabel == null) return;
 
             string head = chat != null && chat.Busy

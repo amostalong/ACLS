@@ -76,7 +76,7 @@ namespace ACLS.Llm.Tools
             if (field == "all" || field == "date")
             {
                 sb.AppendLine($"当前日期：{world.Date}（{world.Date.Year} 年 {world.Date.Month} 月 {world.Date.Day} 日）");
-                sb.AppendLine($"岁差：{world.Date.YearsSince(new GameDate(184, 1, 1))} 年");
+                sb.AppendLine($"年龄：{player.AgeAt(world.Date)} 岁");
             }
 
             if (field == "all" || field == "stats")

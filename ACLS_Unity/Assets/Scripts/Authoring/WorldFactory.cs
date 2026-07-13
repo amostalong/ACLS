@@ -29,7 +29,7 @@ namespace ACLS.Authoring
 
         public static World BuildPlaceholderWorld()
         {
-            var world = new World { Date = new GameDate(184, 1, 1), Paused = true, Gold = 100 };
+            var world = new World { Date = default(GameDate), Paused = true, Gold = 100 };
 
             var hanCourt = world.AddFaction(new Faction { Name = "后汉朝廷" });
 
@@ -75,13 +75,14 @@ namespace ACLS.Authoring
             }
             if (locId == 0 && world.LocationList.Count > 0) locId = world.LocationList[0].Id;
 
-            int birthYear = world.Date.Year - Mathf.Max(1, age);
+            // Birth 暂留空，等 WorldBuild 阶段 LLM 输出 start_date 后回填。
             var player = world.AddCharacter(new Character
             {
                 Name = string.IsNullOrWhiteSpace(name) ? "无名" : name.Trim(),
                 Courtesy = (courtesy ?? "").Trim(),
                 Sex = sex,
-                Birth = new GameDate(birthYear, world.Date.Month, world.Date.Day),
+                Birth = default(GameDate),
+                InitialAge = Mathf.Max(1, age),
                 Stats = StartingStats(traitId),
                 Identity = new Identity { LocationId = locId, FactionId = 0 },
                 IsHistorical = false,

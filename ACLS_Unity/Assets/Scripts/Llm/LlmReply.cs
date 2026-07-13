@@ -75,6 +75,18 @@ namespace ACLS.Llm
             reply = null;
             error = null;
 
+            // No-op fast path: reasoning models (e.g. deepseek-v4-flash) often emit
+            // blank/whitespace content when they decide "no effects to land" — e.g.
+            // the opening turn has no player action yet. Treat empty / JSON-less
+            // content as a successful empty-effects reply instead of a parse failure.
+            if (string.IsNullOrWhiteSpace(raw)
+                || raw.Trim().IndexOf('{') < 0)
+            {
+                reply = new LlmReply();
+                error = null;
+                return true;
+            }
+
             if (!TryParseJsonObject(raw, out var obj, out error))
                 return false;
 

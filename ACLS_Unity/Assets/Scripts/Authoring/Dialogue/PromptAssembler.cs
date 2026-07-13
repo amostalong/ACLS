@@ -70,13 +70,17 @@ namespace ACLS.Authoring
                 }
             }
 
-            // 6. User input / action.
+            // 6. 当前世界日期（LLM 需要知道现在是什么日期才能推进时间）。
+            // World.Date.Year == 0 表示剧本起始日期还未由 LLM 初始化，提示 LLM 输出 start_date。
+            sb.Append("\n\n[当前日期] ").Append(world.Date.Year > 0 ? world.Date.ToString() : "尚未确定（请在回复中通过 start_date 字段指定剧本起始日期）");
+
+            // 7. User input / action.
             if (!string.IsNullOrWhiteSpace(userInput))
                 sb.Append("\n\n").Append(userInput);
 
             sw.Stop();
             var result = sb.ToString();
-            ACLS.Logging.Log.Info(ACLS.Logging.Log.Channels.Llm, "[Timing] PromptAssembler.Assemble({0}): {1:F2}s, 长度={2}", stateType, sw.Elapsed.TotalSeconds, result.Length);
+            ACLS.Logging.Log.Debug(ACLS.Logging.Log.Channels.Llm, "[Timing] PromptAssembler.Assemble({0}): {1:F2}s, 长度={2}", stateType, sw.Elapsed.TotalSeconds, result.Length);
             return result;
         }
 
@@ -92,7 +96,7 @@ namespace ACLS.Authoring
             return sb.ToString();
         }
 
-        public string AssembleNarrationAndChoices(DialogueStateType stateType, string userInput = null)
+        public string AssembleNarrationAndChoices(DialogueStateType stateType, string userInput = null, string toolHint = null)
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
             var sb = new StringBuilder();
@@ -124,16 +128,21 @@ namespace ACLS.Authoring
                         psb.Append($"\n[已知情报] {string.Join("、", player.KnownFacts)}");
                     if (player.OwnedItems != null && player.OwnedItems.Count > 0)
                         psb.Append($"\n[随身物品] {string.Join("、", player.OwnedItems)}");
-                    sb.Append("\n\n[主角信息]\n").Append(psb.ToString().Trim());
-                }
+sb.Append("\n\n[主角信息]\n").Append(psb.ToString().Trim());
             }
+            }
+
+            sb.Append("\n\n[当前日期] ").Append(world.Date.Year > 0 ? world.Date.ToString() : "尚未确定（请在回复中通过 start_date 字段指定剧本起始日期）");
+
+            if (!string.IsNullOrWhiteSpace(toolHint))
+                sb.Append("\n\n").Append(toolHint);
 
             if (!string.IsNullOrWhiteSpace(userInput))
                 sb.Append("\n\n").Append(userInput);
 
             sw.Stop();
             var result = sb.ToString();
-            ACLS.Logging.Log.Info(ACLS.Logging.Log.Channels.Llm, "[Timing] PromptAssembler.AssembleNarrationAndChoices({0}): {1:F2}s, 长度={2}", stateType, sw.Elapsed.TotalSeconds, result.Length);
+            ACLS.Logging.Log.Debug(ACLS.Logging.Log.Channels.Llm, "[Timing] PromptAssembler.AssembleNarrationAndChoices({0}): {1:F2}s, 长度={2}", stateType, sw.Elapsed.TotalSeconds, result.Length);
             return result;
         }
 
@@ -170,6 +179,8 @@ namespace ACLS.Authoring
                     psb.Append($"\n[随身物品] {string.Join("、", player.OwnedItems)}");
                 sb.Append("\n\n[主角信息]\n").Append(psb.ToString().Trim());
             }
+
+            sb.Append("\n\n[当前日期] ").Append(world.Date.Year > 0 ? world.Date.ToString() : "尚未确定（请在回复中通过 start_date 字段指定剧本起始日期）");
 
             if (!string.IsNullOrWhiteSpace(userInput))
                 sb.Append("\n\n[玩家动作]\n").Append(userInput);

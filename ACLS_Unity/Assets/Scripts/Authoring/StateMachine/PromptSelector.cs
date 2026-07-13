@@ -1,6 +1,7 @@
 using System.Text;
 using UnityEngine;
 using ACLS.Data;
+using ACLS.Sim;
 
 namespace ACLS.Authoring
 {
@@ -21,11 +22,15 @@ namespace ACLS.Authoring
     public sealed class PromptSelector
     {
         private readonly LlmPromptConfig config;
+        private World world;
 
-        public PromptSelector(LlmPromptConfig config)
+        public PromptSelector(LlmPromptConfig config, World world = null)
         {
             this.config = config;
+            this.world = world;
         }
+
+        public void AttachWorld(World world) => this.world = world;
 
         // The base prompt loaded from SystemPrompt.md (or fallback).
         public string BasePrompt => config?.SystemPrompt ?? "";
@@ -34,6 +39,64 @@ namespace ACLS.Authoring
         public StringBuilder GetBasePrompt()
         {
             return new StringBuilder(BasePrompt);
+        }
+
+        // 拼接"时代大势"实时上下文段落。可在 ResolveSystemPrompt 中追加到 system prompt 末尾。
+        // 始终返回空字符串表示"无内容"(便于上层直接 Append 而无需判空)。
+        public string BuildEraTrendContext()
+        {
+            if (world?.EraTrend == null) return "";
+            var era = world.EraTrend;
+            var today = world.Date;
+            var sb = new StringBuilder();
+
+            sb.AppendLine();
+            sb.AppendLine("【时代大势·实时上下文】");
+            sb.AppendLine($"- 当前日期：{today.ToLLMString()}");
+            sb.AppendLine($"- 当前阶段：{(string.IsNullOrEmpty(era.CurrentStageName) ? "（无）" : era.CurrentStageName)}");
+
+            // 列出 ≤6 月内未触发的硬锚点(最多 3 个)
+            int upcoming = 0;
+            var anchors = era.ActiveAnchors ?? EraTrendAnchors.EmptyList;
+            for (int i = 0; i < anchors.Count && upcoming < 3; i++)
+            {
+                var a = anchors[i];
+                if (era.TriggeredAnchorIds.Contains(a.Id)) continue;
+                int days = DaysBetween(today, a.TriggerDate);
+                if (days < 0 || days > 180) continue;
+                sb.AppendLine($"- 即将发生：{a.TriggerDate.ToLLMString()}（{days} 天后）{a.Title}");
+                upcoming++;
+            }
+
+            // 列出已注入的前兆(按 layer 分组;开局追补始终展示)
+            if (era.ForeshadowingInjected != null && era.ForeshadowingInjected.Count > 0)
+            {
+                int shown = 0;
+                for (int i = 0; i < era.ForeshadowingInjected.Count && shown < 6; i++)
+                {
+                    var f = era.ForeshadowingInjected[i];
+                    if (!f.Template.StartsWith("[开局追补]") && era.TriggeredAnchorIds.Contains(f.AnchorId)) continue;
+                    string body = f.Template.StartsWith("[开局追补]") ? f.Template.Substring("[开局追补]".Length) : f.Template;
+                    string tag = f.Template.StartsWith("[开局追补]") ? "[开局追补]" : $"[前兆{f.TargetLayer}]";
+                    sb.AppendLine($"- {tag} {body}");
+                    shown++;
+                }
+            }
+
+            return sb.ToString();
+        }
+
+        private static int DaysBetween(GameDate a, GameDate b)
+        {
+            int days = 0;
+            var cur = a;
+            while (cur < b)
+            {
+                cur = cur.AddDays(1);
+                days++;
+                if (days > 4000) break;
+            }
+            return days;
         }
 
         // Returns the markdown text for a specific fragment, or empty string

@@ -11,6 +11,8 @@ namespace ACLS.Sim
         public string Courtesy = "";   // 字
         public Sex Sex;
         public GameDate Birth;
+        // 玩家角色出生时年龄（用于 LLM 决定起始日期后反推 Birth）。
+        public int InitialAge;
         public GameDate Death;          // meaningful only when IsDead
         public bool IsDead;
         public Stats Stats;

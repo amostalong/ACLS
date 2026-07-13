@@ -14,7 +14,7 @@ namespace ACLS.Authoring
     //
     // Responsibilities:
     //   - Receive UI calls (Choose, SubmitFreeform, ExpandCharacter, StartOpening)
-    //   - Manage world-side side effects (ApplyEffects, AdvanceTime) on choice
+    //   - Manage world-side side effects (ApplyEffects) on choice
     //   - Surface events to the UI layer (OnMessage, OnChoicesChanged, etc.)
     //   - Delegate all LLM orchestration (prompt assembly, calling, parsing,
     //     state transitions) to LlmDialogueOrchestrator.
@@ -94,6 +94,12 @@ namespace ACLS.Authoring
 
             orchestrator.OnNarrationDelta += narration =>
             {
+                // Skip empty deltas so the typewriter doesn't render a fresh
+                // empty chat block when the LLM streams pure-tool-call rounds
+                // (no `nar` field is emitted then — TryExtractNarration returns
+                // false upstream, but defensively double-filter here).
+                if (string.IsNullOrWhiteSpace(narration)) return;
+
                 OnMessageDelta?.Invoke(narration);
                 if (_currentStreamBlock != null)
                 {
@@ -116,7 +122,11 @@ namespace ACLS.Authoring
             orchestrator.OnStreamingBegin += () =>
             {
                 _currentStreamBlock = UI.ChatBlock.Streaming(ChatRole.Assistant, "旁白");
-                OnBlock?.Invoke(_currentStreamBlock);
+                // Defer OnBlock until the first narration delta arrives. This
+                // prevents an empty chat block from appearing when the LLM's
+                // streaming round emits only tool calls / thinking (no `nar`
+                // field) — the block is created up front but only pushed to
+                // the UI once real content is in it.
                 OnStreamingBegin?.Invoke();
             };
 
@@ -125,7 +135,12 @@ namespace ACLS.Authoring
                 if (_currentStreamBlock != null)
                 {
                     _currentStreamBlock.StreamFlushed = true;
-                    OnBlock?.Invoke(_currentStreamBlock);   // final tick
+                    // Only push to UI if the block actually accumulated any text.
+                    // This prevents pure-tool-call rounds (which create a block
+                    // via OnStreamingBegin but never fill it) from leaving a
+                    // blank message in the chat panel.
+                    if (!string.IsNullOrWhiteSpace(_currentStreamBlock.CurrentStreamText))
+                        OnBlock?.Invoke(_currentStreamBlock);   // final tick
                     _currentStreamBlock = null;
                 }
                 OnStreamingEnd?.Invoke();
@@ -225,7 +240,7 @@ namespace ACLS.Authoring
             if (!Ready || Busy) return;
             if (currentChoices == null || index < 0 || index >= currentChoices.Count) return;
 
-            Log.Info(Log.Channels.Llm, "[Timing] Choose click t={0:F3}s index={1}", Time.realtimeSinceStartup, index);
+            Log.Debug(Log.Channels.Llm, "[Timing] Choose click t={0:F3}s index={1}", Time.realtimeSinceStartup, index);
             var choice = currentChoices[index];
 
             // 1. Show player's choice as "你" message.
@@ -238,8 +253,61 @@ namespace ACLS.Authoring
 
             // 3. Next LLM turn.
             string action = $"[玩家选择：{choice.Label}]\n请承接上文，描写下一幕，并给出 1-4 个新选项。";
-            orchestrator?.SendAction(action, displayText: choice.Label);
+            DispatchAction(action, choice.Label);
         }
+
+        // Staleness-aware dispatcher. Before sending the player's action to
+        // StagePlay, checks StageStaleness — if L1 is stale, runs StageRefresh
+        // first and re-feeds the original action on completion.
+        private void DispatchAction(string action, string display)
+        {
+            if (world?.Stage == null || !world.Stage.IsStageBuilt)
+            {
+                Log.Debug(Log.Channels.Llm,
+                    "[Staleness] skip check (stage not built) | SendAction 直接提交 | display={0}",
+                    Truncate(display ?? "", 60));
+                orchestrator?.SendAction(action, displayText: display);
+                return;
+            }
+
+            var report = ACLS.Authoring.Stage.StageStaleness.Evaluate(world);
+            if (!report.L1NeedsFullRefresh)
+            {
+                // Fresh — log only at Debug to avoid spamming the main channel on every
+                // player action. Stale path always logs at Info so the refresh sequence
+                // is easy to grep in acls-runtime.log.
+                Log.Debug(Log.Channels.Llm,
+                    "[Staleness] L1 fresh | L1light={0} L2={1} L3={2} L4={3} | SendAction 直发 | display={4}",
+                    report.L1NeedsLightRefresh, report.L2NeedsRefresh, report.L3NeedsRefresh, report.L4NeedsRefresh,
+                    Truncate(display ?? "", 60));
+                orchestrator?.SendAction(action, displayText: display);
+                return;
+            }
+
+            Log.Info(Log.Channels.Llm,
+                "[Staleness] L1 stale | reason={0} | L1light={1} L2={2} L3={3} L4={4} | 计划 StageRefresh→SendAction | display={5}",
+                report.Reason, report.L1NeedsLightRefresh, report.L2NeedsRefresh, report.L3NeedsRefresh, report.L4NeedsRefresh,
+                Truncate(display ?? "", 60));
+            orchestrator?.StartStageRefresh(report.Reason, success =>
+            {
+                if (success)
+                {
+                    Log.Info(Log.Channels.Llm,
+                        "[Staleness] StageRefresh 完成 | 续接原 SendAction | display={0}",
+                        Truncate(display ?? "", 60));
+                }
+                else
+                {
+                    Log.Warn(Log.Channels.Llm,
+                        "[Staleness] StageRefresh 失败 | 原 SendAction 仍提交 | display={0}",
+                        Truncate(display ?? "", 60));
+                }
+                orchestrator?.SendAction(action, displayText: display);
+            });
+        }
+
+        private static string Truncate(string s, int n) =>
+            s == null ? "" : s.Length <= n ? s : s.Substring(0, n) + "…";
 
         public void StartWorldBuild(string roleDescription, string worldDescription, Action<bool> onComplete)
         {
@@ -378,7 +446,7 @@ namespace ACLS.Authoring
             OnBlock?.Invoke(UI.ChatBlock.Static(ChatRole.User, "你", text));
 
             string action = $"[玩家自由行动：{text}] 请承接上文，描写下一幕，并给出 1-4 个新选项。";
-            orchestrator?.SendAction(action, displayText: text);
+            DispatchAction(action, text);
         }
 
         // -------- helpers --------
@@ -422,15 +490,7 @@ namespace ACLS.Authoring
             }
         }
 
-        private void AdvanceTime(int days)
-        {
-            if (days <= 0) return;
-            for (int i = 0; i < days; i++)
-            {
-                if (world.EventQueue.Count > 0) break;
-                world.Tick();
-            }
-        }
+        
 
         private static DialogueSubState? MapToDialogueSubState(DialogueStateType type) =>
             type == DialogueStateType.StagePlay ? DialogueSubState.FreeNarrative : (DialogueSubState?)null;

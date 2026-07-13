@@ -97,6 +97,8 @@ namespace ACLS.Authoring
             ToolRegistry.Register(new ReadPlayerStateTool(World));
             ToolRegistry.Register(new ReadMemoryTool(World));
             ToolRegistry.Register(new WriteMemoryTool(World));
+            // 时代大势(主线)工具
+            ToolRegistry.Register(new ReadEraTrendTool(World));
         }
 
         public void Dispose()
@@ -176,7 +178,8 @@ namespace ACLS.Authoring
 
             Log.Info(Log.Channels.Llm, "▶ StartOpening: preset={0}", preset?.Title ?? preset?.Blurb);
             var state = new OpeningSceneState(this, preset);
-            string narrationPrompt = PromptAssembler?.AssembleNarrationAndChoices(state.StateType, state.BuildOpeningAction()) ?? "";
+            string toolHint = BuildToolHint();
+            string narrationPrompt = PromptAssembler?.AssembleNarrationAndChoices(state.StateType, state.BuildOpeningAction(), toolHint) ?? "";
 
             SetBusy(true);
             var thisCts = CancellationTokenSource.CreateLinkedTokenSource(lifetimeCts.Token);
@@ -184,7 +187,7 @@ namespace ACLS.Authoring
             try
             {
                 var messages = new List<ChatMessage> { new ChatMessage(ChatRole.User, "开始") };
-                var narrationResp = await CompleteNarrationAndChoicesStream(narrationPrompt, messages, thisCts.Token);
+                var narrationResp = await CompleteStreamWithTools(narrationPrompt, messages, thisCts.Token);
                 TrackUsage(narrationResp.Usage);
 
                 if (!NarrationChoicesTextParser.TryParse(narrationResp.Content, out var narration, out var choices, out var effectTag, out var parseError))
@@ -362,6 +365,20 @@ namespace ACLS.Authoring
                     pipelineWorldBuildReply = wsReply;
                     worldBuildContext = wsReply.ToContextText();
                     World.Stage.WorldBuild = worldBuildContext;
+
+                    // LLM 指定的剧本起始日期写入 World.Date。
+                    // 若 LLM 未输出 start_date 或解析失败，World.Date 保持 0,0,0，后续环节应作“未初始化”处理。
+                    if (wsReply.StartDate.Year > 0)
+                    {
+                        World.Date = wsReply.StartDate;
+                        BackfillCharacterBirths();
+                        Log.Info(Log.Channels.Llm, "[WorldBuild] 起始日期写入: {0}", World.Date);
+                    }
+                    else
+                    {
+                        Log.Warn(Log.Channels.Llm, "[WorldBuild] LLM 未提供有效 start_date，World.Date 保持未初始化 (0,0,0)");
+                    }
+
                     PublishNarration(wsReply.Narration);
 
                     // Build player context string for subsequent steps (basic info only; expansion happens later in Step 5)
@@ -588,6 +605,12 @@ namespace ACLS.Authoring
                     }
                     World.Stage.L1Stage = l1Text;
 
+                    // Touch L1 staleness metadata so StageStaleness.Evaluate knows
+                    // when / where L1 was last built.
+                    int locId = World.Player?.Identity?.LocationId ?? 0;
+                    int npcCount = peReply?.NpcExpansions?.Count ?? 0;
+                    World.Stage.TouchL1(World, locId, npcCount);
+
                     // nar 是同一个字段，两个解析器读到的一致——只发布一次。
                     string narration = !string.IsNullOrWhiteSpace(peReply.Narration) ? peReply.Narration : l1Narration;
                     PublishNarration(narration);
@@ -696,6 +719,156 @@ namespace ACLS.Authoring
             }
         }
 
+        // 2b. Incremental L1 rebuild — triggered when StageStaleness reports
+        // L1NeedsFullRefresh before a StagePlay turn. Rebuilds only L1_Stage,
+        // reuses L2/L3/L4 and the player / NPC expansions. On success the
+        // caller (ChatBridge) re-feeds the original player action into SendAction.
+        public async void StartStageRefresh(string triggerReason, Action<bool> onComplete)
+        {
+            if (Busy || LlmClient == null || World == null)
+            {
+                Log.Warn(Log.Channels.Llm, "[ERR] StartStageRefresh 跳过: Busy={0} LlmClient={1} World={2}",
+                    Busy, LlmClient != null, World != null);
+                onComplete?.Invoke(false);
+                return;
+            }
+
+            Log.Info(Log.Channels.Llm, "▶ StartStageRefresh: reason={0}", triggerReason);
+            EmitSystemStatus("场景已过期，正在重建…");
+
+            string previousL1 = World.Stage?.L1Stage ?? "";
+            string fragment = LoadFragment("Fragment_L1Refresh");
+            string playerContext = BuildPlayerContextText();
+            string l4Context = World.Stage?.L4World ?? "";
+            string l3Context = World.Stage?.L3Expanse ?? "";
+            string l2Context = World.Stage?.L2Arena ?? "";
+
+            string prompt = fragment
+                .Replace("{previous_l1}", previousL1)
+                .Replace("{l4_context}", l4Context)
+                .Replace("{l3_context}", l3Context)
+                .Replace("{l2_context}", l2Context)
+                .Replace("{player_context}", playerContext)
+                .Replace("{trigger_reason}", triggerReason ?? "未指定");
+
+            // Augment with tool descriptors and the same "use tools" hint that
+            // WorldBuildState gets, so the LLM knows it can call lookup_character
+            // / read_player_state / read_world_layer to verify data.
+            string toolHint = "\n\n## 可用工具\n" +
+                "- read_player_state：返回玩家当前位置/状态\n" +
+                "- read_world_layer(\"L2\"|\"L3\"|\"L4\")：返回该层背景文本\n" +
+                "- lookup_character(name)：查询人物详情\n" +
+                "- lookup_location(name)：查询地点详情\n" +
+                "- lookup_faction(name)：查询势力详情\n" +
+                "构建 L1 时优先调以上工具核实数据。\n";
+            prompt += toolHint;
+
+            SetBusy(true);
+            var thisCts = CancellationTokenSource.CreateLinkedTokenSource(lifetimeCts.Token);
+            currentCts = thisCts;
+            try
+            {
+                // Tool-driven stream: LLM may call read_player_state / lookup_character etc.
+                var resp = await CompleteStreamWithTools(prompt,
+                    new List<ChatMessage> { new ChatMessage(ChatRole.User, "开始场景重建") }, thisCts.Token);
+                TrackUsage(resp.Usage);
+
+                var (ok, l1Text, narration) = ParseL1Reply(resp.Content);
+                if (!ok)
+                {
+                    Log.Error(Log.Channels.Llm, "StageRefresh L1 解析失败 | content 前 300: {0}", Truncate(resp.Content ?? "", 300));
+                    Log.Warn(Log.Channels.Llm,
+                        "[StageRefresh] 解析失败 | reason={0} | onComplete(false)", triggerReason);
+                    OnError?.Invoke("场景重建解析失败。");
+                    onComplete?.Invoke(false);
+                    return;
+                }
+
+                World.Stage.L1Stage = l1Text;
+
+                // Touch staleness so the next Evaluate won't immediately re-trigger.
+                int locId = World.Player?.Identity?.LocationId ?? 0;
+                int npcCount = CountNpcsAtLocation(World, locId);
+                World.Stage.TouchL1(World, locId, npcCount);
+
+                // Publish narration as a normal message so the player sees the transition.
+                if (!string.IsNullOrWhiteSpace(narration))
+                    PublishNarration(narration);
+
+                Log.Info(Log.Channels.Llm,
+                    "[StageRefresh] 完成 | reason={0} L1长度={1} loc={2} npcs={3} narration长度={4} | onComplete(true)",
+                    triggerReason, l1Text.Length, locId, npcCount, narration?.Length ?? 0);
+
+                // Release Busy BEFORE invoking onComplete so the callback
+                // (which typically re-feeds the original action into SendAction)
+                // isn't rejected by the Busy guard.
+                SetBusy(false);
+                onComplete?.Invoke(true);
+            }
+            catch (OperationCanceledException)
+            {
+                if (!lifetimeCts.IsCancellationRequested)
+                {
+                    Log.Error(Log.Channels.Llm, "已中断场景重建");
+                    OnError?.Invoke("已中断场景重建。");
+                }
+                Log.Warn(Log.Channels.Llm,
+                    "[StageRefresh] 已取消 | reason={0} | onComplete(false)", triggerReason);
+                SetBusy(false);
+                onComplete?.Invoke(false);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(Log.Channels.Llm, "StageRefresh 异常: {0}", ex.Message);
+                OnError?.Invoke("场景重建异常：" + ex.Message);
+                Log.Warn(Log.Channels.Llm,
+                    "[StageRefresh] 失败 | reason={0} | onComplete(false) | ex={1}",
+                    triggerReason, ex.GetType().Name);
+                SetBusy(false);
+                onComplete?.Invoke(false);
+            }
+            finally
+            {
+                if (currentCts == thisCts) currentCts = null;
+                thisCts.Dispose();
+                // SetBusy(false) is called inside try/catch BEFORE onComplete so the
+                // callback can submit a follow-up action without bouncing off Busy.
+                // Guard against the case where control flow exits via raw throw (not
+                // caught) so Busy is still released.
+                SetBusy(false);
+            }
+        }
+
+        private static int CountNpcsAtLocation(World world, int locationId)
+        {
+            if (world == null || locationId == 0) return 0;
+            int playerId = world.PlayerCharacterId;
+            int count = 0;
+            foreach (var c in world.AliveCharacters())
+            {
+                if (c.Id == playerId) continue;
+                if (c.Identity != null && c.Identity.LocationId == locationId) count++;
+            }
+            return count;
+        }
+
+        private string BuildPlayerContextText()
+        {
+            var p = World?.Player;
+            if (p == null) return "";
+            var sb = new StringBuilder();
+            sb.Append($"姓名：{p.Name}，{p.AgeAt(World.Date)}岁，{(p.Sex == Sex.Male ? "男" : "女")}");
+            if (!string.IsNullOrWhiteSpace(p.Courtesy)) sb.Append($"，字{p.Courtesy}");
+            if (!string.IsNullOrWhiteSpace(p.BackgroundStory)) sb.Append($"\n[背景] {p.BackgroundStory}");
+            if (!string.IsNullOrWhiteSpace(p.Values)) sb.Append($"\n[价值观] {p.Values}");
+            if (!string.IsNullOrWhiteSpace(p.CurrentGoal)) sb.Append($"\n[近期目标] {p.CurrentGoal}");
+            if (!string.IsNullOrWhiteSpace(p.Secret)) sb.Append($"\n[秘密] {p.Secret}");
+            if (p.Connections != null && p.Connections.Count > 0) sb.Append($"\n[人脉] {string.Join("、", p.Connections)}");
+            if (p.KnownFacts != null && p.KnownFacts.Count > 0) sb.Append($"\n[已知情报] {string.Join("、", p.KnownFacts)}");
+            if (p.OwnedItems != null && p.OwnedItems.Count > 0) sb.Append($"\n[随身物品] {string.Join("、", p.OwnedItems)}");
+            return sb.ToString();
+        }
+
         // 2. Regular narrative turn (choice selected or freeform input).
         public async void SendAction(string userInput, string displayText = null,
             bool addToHistory = true)
@@ -718,9 +891,10 @@ namespace ACLS.Authoring
                 History.Add(new ChatMessage(ChatRole.User, displayText));
 
             var swAssemble = System.Diagnostics.Stopwatch.StartNew();
-            string narrationPrompt = PromptAssembler?.AssembleNarrationAndChoices(CurrentState.StateType, userInput) ?? "";
+            string toolHint = BuildToolHint();
+            string narrationPrompt = PromptAssembler?.AssembleNarrationAndChoices(CurrentState.StateType, userInput, toolHint) ?? "";
             swAssemble.Stop();
-            Log.Info(Log.Channels.Llm, "[Timing] Prompt组装: {0:F2}s, prompt长度={1}", swAssemble.Elapsed.TotalSeconds, narrationPrompt?.Length ?? 0);
+            Log.Debug(Log.Channels.Llm, "[Timing] Prompt组装: {0:F2}s, prompt长度={1}", swAssemble.Elapsed.TotalSeconds, narrationPrompt?.Length ?? 0);
 
             SetBusy(true);
             var thisCts = CancellationTokenSource.CreateLinkedTokenSource(lifetimeCts.Token);
@@ -732,15 +906,15 @@ namespace ACLS.Authoring
                 var messages = History.Recent(RecentMessages);
 
                 var swStream = System.Diagnostics.Stopwatch.StartNew();
-                var narrationResp = await CompleteNarrationAndChoicesStream(narrationPrompt, messages, thisCts.Token);
+                var narrationResp = await CompleteStreamWithTools(narrationPrompt, messages, thisCts.Token);
                 swStream.Stop();
                 TrackUsage(narrationResp.Usage);
-                Log.Info(Log.Channels.Llm, "[Timing] 文本流式调用: {0:F2}s", swStream.Elapsed.TotalSeconds);
+                Log.Debug(Log.Channels.Llm, "[Timing] 文本流式调用: {0:F2}s", swStream.Elapsed.TotalSeconds);
 
                 var swParse = System.Diagnostics.Stopwatch.StartNew();
                 bool parsed = NarrationChoicesTextParser.TryParse(narrationResp.Content, out var narration, out var choices, out var effectTag, out var parseError);
                 swParse.Stop();
-                Log.Info(Log.Channels.Llm, "[Timing] 文本响应解析: {0:F2}s, content长度={1}", swParse.Elapsed.TotalSeconds, narrationResp.Content?.Length ?? 0);
+                Log.Debug(Log.Channels.Llm, "[Timing] 文本响应解析: {0:F2}s, content长度={1}", swParse.Elapsed.TotalSeconds, narrationResp.Content?.Length ?? 0);
 
                 if (!parsed)
                 {
@@ -758,7 +932,7 @@ namespace ACLS.Authoring
                 var swHandle = System.Diagnostics.Stopwatch.StartNew();
                 HandleResult(CurrentState, result);
                 swHandle.Stop();
-                Log.Info(Log.Channels.Llm, "[Timing] HandleResult: {0:F2}s, 总耗时: {1:F2}s",
+                Log.Debug(Log.Channels.Llm, "[Timing] HandleResult: {0:F2}s, 总耗时: {1:F2}s",
                     swHandle.Elapsed.TotalSeconds, swTotal.Elapsed.TotalSeconds);
 
                 // Kick off effects in the background. We pass a fresh List
@@ -895,6 +1069,53 @@ namespace ACLS.Authoring
             OnNarration?.Invoke(text);
         }
 
+        /// <summary>
+        /// 生成工具提示文本，注入到 system prompt。告诉 LLM：本地可以读哪些数据 / 何时该调用。
+        /// 描述从 ToolRegistry 动态生成，避免与硬编码列表脱节。
+        /// </summary>
+        private string BuildToolHint()
+        {
+            var tools = ToolRegistry.GetAllDefinitions();
+            if (tools == null || tools.Count == 0) return null;
+
+            var sb = new StringBuilder();
+            sb.Append("## 可用本地工具\n\n");
+            sb.Append("以下工具可调用，调用后本地会返回实时数据。**需要核实人物 / 地点 / 势力 / 玩家状态 / 世界背景时优先调用，不要凭记忆捏造姓名、位置或关系。**\n\n");
+            sb.Append("| 工具 | 必填参数 | 用途 |\n|---|---|---|\n");
+            foreach (var t in tools)
+            {
+                string desc = (t.Description ?? "").Replace("\n", " ").Replace("|", "\\|");
+                if (desc.Length > 60) desc = desc.Substring(0, 60) + "…";
+                string paramsHint = ExtractRequiredParams(t.InputSchema);
+                sb.Append("| `").Append(t.Name).Append("` | ").Append(paramsHint).Append(" | ").Append(desc).Append(" |\n");
+            }
+            sb.Append("\n**调用格式严格要求**：以 JSON 对象形式传参。例如：\n");
+            sb.Append("- `read_world_layer({\"layer\": \"L4\"})` — layer 必须是 `\"L2\"` / `\"L3\"` / `\"L4\"` 之一\n");
+            sb.Append("- `lookup_character({\"name\": \"何茂\"})` — name 为人物中文名\n");
+            sb.Append("- `lookup_faction({\"name\": \"泛银河联邦\"})` — name 为势力中文名\n");
+            sb.Append("- `lookup_location({\"name\": \"�的修理铺\"})` — name 为地点中文名\n");
+            sb.Append("- `calculate_travel({\"from\": \"新希望站\", \"to\": \"炽天使酒吧\"})`\n");
+            sb.Append("- `read_player_state()` / `read_memory({\"count\": 5})` / `read_era_trend()` / `write_memory({\"date\": \"184年01月08日\", \"event\": \"...\"})`\n");
+            sb.Append("\n**参数名、参数格式、参数值都要严格正确**。调用报错时请仔细检查参数格式（如忘了引号、拼错参数名），换另一工具调用或者不调，不要重复试同一工具。\n");
+            return sb.ToString();
+        }
+
+        // Pull the required parameter list out of a tool's JSON Schema so the
+        // model sees the exact field names it must provide.
+        private static string ExtractRequiredParams(object schema)
+        {
+            if (schema == null) return "—";
+            try
+            {
+                var jo = schema as Newtonsoft.Json.Linq.JObject
+                       ?? Newtonsoft.Json.Linq.JObject.FromObject(schema);
+                var req = jo["required"] as Newtonsoft.Json.Linq.JArray;
+                if (req == null || req.Count == 0) return "（无）";
+                return string.Join(", ", req.Select(x => "`" + (string)x + "`"));
+            }
+            catch { return "—"; }
+        }
+
         private static IReadOnlyList<ChatMessage> EnsureMessages(IReadOnlyList<ChatMessage> messages)
         {
             if (messages == null || messages.Count == 0)
@@ -908,7 +1129,7 @@ namespace ACLS.Authoring
             SetThinking("");
             OnStreamingBegin?.Invoke();
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            Log.Info(Log.Channels.Llm, "[Timing] TextStream START t={0:F3}s", Time.realtimeSinceStartup);
+            Log.Debug(Log.Channels.Llm, "[Timing] TextStream START t={0:F3}s", Time.realtimeSinceStartup);
 
             var raw = new StringBuilder();
             string lastShownNarration = "";
@@ -941,7 +1162,7 @@ namespace ACLS.Authoring
                     UniTask.Post(() => OnNarrationDelta?.Invoke(finalNarration));
             }
             OnStreamingEnd?.Invoke();
-            Log.Info(Log.Channels.Llm, "[Timing] TextStream END t={0:F3}s elapsed={1:F2}s rawLen={2}",
+            Log.Debug(Log.Channels.Llm, "[Timing] TextStream END t={0:F3}s elapsed={1:F2}s rawLen={2}",
                 Time.realtimeSinceStartup, sw.Elapsed.TotalSeconds, raw.Length);
             return resp;
         }
@@ -953,7 +1174,7 @@ namespace ACLS.Authoring
             var sw = System.Diagnostics.Stopwatch.StartNew();
             var resp = await LlmClient.CompleteAsync(prompt, messages, ct);
             sw.Stop();
-            Log.Info(Log.Channels.Llm, "[Timing] EffectsOnly END elapsed={0:F2}s rawLen={1}", sw.Elapsed.TotalSeconds, resp?.Content?.Length ?? 0);
+            Log.Debug(Log.Channels.Llm, "[Timing] EffectsOnly END elapsed={0:F2}s rawLen={1}", sw.Elapsed.TotalSeconds, resp?.Content?.Length ?? 0);
             return resp;
         }
 
@@ -1026,14 +1247,15 @@ namespace ACLS.Authoring
             if (string.IsNullOrWhiteSpace(s)) return null;
             try
             {
-                var m = System.Text.RegularExpressions.Regex.Match(s.Trim(), @"(\d{1,4})年(\d{1,2})月(\d{1,2})日");
+                var m = System.Text.RegularExpressions.Regex.Match(s.Trim(), @"(\d{4})年(\d{1,2})月(\d{1,2})日");
                 if (m.Success)
                 {
                     int y = int.Parse(m.Groups[1].Value);
                     int mo = int.Parse(m.Groups[2].Value);
                     int d = int.Parse(m.Groups[3].Value);
-                    if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31)
-                        return new Sim.GameDate(y, mo, d);
+                    if (y < 100 || y > 2200 || mo < 1 || mo > 12 || d < 1 || d > 31)
+                        return null;
+                    return new Sim.GameDate(y, mo, d);
                 }
             }
             catch { }
@@ -1046,7 +1268,7 @@ namespace ACLS.Authoring
             SetThinking("");
             OnStreamingBegin?.Invoke();
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            Log.Info(Log.Channels.Llm, "[Timing] Stream START t={0:F3}s", Time.realtimeSinceStartup);
+            Log.Debug(Log.Channels.Llm, "[Timing] Stream START t={0:F3}s", Time.realtimeSinceStartup);
 
             var raw = new StringBuilder();
             string last = "";
@@ -1089,7 +1311,7 @@ namespace ACLS.Authoring
             // ── 流结束后，发出最后一次完整 narration delta（确保打字机看到完整文本） ──
             EmitFinalNarrationDelta(raw);
             OnStreamingEnd?.Invoke();
-            Log.Info(Log.Channels.Llm, "[Timing] Stream END t={0:F3}s elapsed={1:F2}s rawLen={2}",
+            Log.Debug(Log.Channels.Llm, "[Timing] Stream END t={0:F3}s elapsed={1:F2}s rawLen={2}",
                 Time.realtimeSinceStartup, sw.Elapsed.TotalSeconds, raw.Length);
 
             // 日志输出 LLM 流式响应汇总
@@ -1097,8 +1319,8 @@ namespace ACLS.Authoring
 
             // 日志输出 thinking + 回复内容（太长时只输出摘要，避免刷屏）
             if (TryExtractThinking(raw, out var finalThinking) && !string.IsNullOrWhiteSpace(finalThinking))
-                Log.Info(Log.Channels.Llm, "[Think] len={0} preview={1}", finalThinking.Length, Truncate(finalThinking, 200));
-            Log.Info(Log.Channels.Llm, "[Resp] len={0} preview={1}", raw.Length, Truncate(raw.ToString(), 200));
+                Log.InfoColored(Log.Channels.Llm, Log.Colors.LlmIO, "[Think] len={0} preview={1}", finalThinking.Length, Truncate(finalThinking, 200));
+            Log.InfoColored(Log.Channels.Llm, Log.Colors.LlmIO, "[Resp] len={0} preview={1}", raw.Length, Truncate(raw.ToString(), 200));
 
             // Record in debug panel (always on main thread).
             string reqJson = $"{{\"model\":\"...\",\"system\":{EscapeJson(prompt)},\"messages\":[{string.Join(",", messages.Select(m => $"{{\"role\":\"{m.Role}\",\"content\":{EscapeJson(m.Content)}}}"))}]}}";
@@ -1119,7 +1341,7 @@ namespace ACLS.Authoring
 
             OnStreamingBegin?.Invoke();
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            Log.Info(Log.Channels.Llm, "[Timing] ToolStream START t={0:F3}s promptLen={1}", Time.realtimeSinceStartup, prompt?.Length ?? 0);
+            Log.Debug(Log.Channels.Llm, "[Timing] ToolStream START t={0:F3}s promptLen={1}", Time.realtimeSinceStartup, prompt?.Length ?? 0);
             var tools = ToolRegistry.GetAllDefinitions();
             Log.Info(Log.Channels.Llm, "[Tool] 可用工具({0}个): {1}",
                 tools.Count, string.Join(", ", tools.Select(t => t.Name)));
@@ -1193,7 +1415,7 @@ namespace ACLS.Authoring
                     sw.Stop();
                     lastResponseTime = (float)sw.Elapsed.TotalSeconds;
                     OnResponseTime?.Invoke(lastResponseTime);
-                    Log.Info(Log.Channels.Llm, "[Timing] ToolStream END t={0:F3}s elapsed={1:F2}s loops={2} rawLen={3}",
+                    Log.Debug(Log.Channels.Llm, "[Timing] ToolStream END t={0:F3}s elapsed={1:F2}s loops={2} rawLen={3}",
                         Time.realtimeSinceStartup, sw.Elapsed.TotalSeconds, loopCount, raw.Length);
 
                     // ── 发出最后一次完整 narration delta（确保打字机看到完整文本） ──
@@ -1204,8 +1426,8 @@ namespace ACLS.Authoring
 
                     // 日志输出 thinking + 回复内容（太长时只输出摘要）
                     if (TryExtractThinking(raw, out var finalThinking) && !string.IsNullOrWhiteSpace(finalThinking))
-                        Log.Info(Log.Channels.Llm, "[Think] len={0} preview={1}", finalThinking.Length, Truncate(finalThinking, 200));
-                    Log.Info(Log.Channels.Llm, "[Resp] len={0} preview={1}", raw.Length, Truncate(raw.ToString(), 200));
+                        Log.InfoColored(Log.Channels.Llm, Log.Colors.LlmIO, "[Think] len={0} preview={1}", finalThinking.Length, Truncate(finalThinking, 200));
+                    Log.InfoColored(Log.Channels.Llm, Log.Colors.LlmIO, "[Resp] len={0} preview={1}", raw.Length, Truncate(raw.ToString(), 200));
 
                     return resp;
                 }
@@ -1267,8 +1489,8 @@ namespace ACLS.Authoring
             if (raw.Length > 0)
             {
                 if (TryExtractThinking(raw, out var finalThinking) && !string.IsNullOrWhiteSpace(finalThinking))
-                    Log.Info(Log.Channels.Llm, "[Think] len={0} preview={1}", finalThinking.Length, Truncate(finalThinking, 200));
-                Log.Info(Log.Channels.Llm, "[Resp] len={0} preview={1}", raw.Length, Truncate(raw.ToString(), 200));
+                    Log.InfoColored(Log.Channels.Llm, Log.Colors.LlmIO, "[Think] len={0} preview={1}", finalThinking.Length, Truncate(finalThinking, 200));
+                Log.InfoColored(Log.Channels.Llm, Log.Colors.LlmIO, "[Resp] len={0} preview={1}", raw.Length, Truncate(raw.ToString(), 200));
             }
             sw.Stop();
             lastResponseTime = (float)sw.Elapsed.TotalSeconds;
@@ -1433,6 +1655,22 @@ namespace ACLS.Authoring
             if (Busy == v) return;
             Busy = v;
             OnBusyChanged?.Invoke(v);
+        }
+
+        // World.Date 从 LLM 拿到后调用：用 Character.InitialAge 反推出生日。
+        // 玩家角色被创建时 Birth=default(GameDate)，此处回填。
+        private void BackfillCharacterBirths()
+        {
+            if (World == null || World.Date.Year <= 0) return;
+            int y = World.Date.Year;
+            int mo = World.Date.Month;
+            int d = World.Date.Day;
+            for (int i = 0; i < World.CharacterList.Count; i++)
+            {
+                var c = World.CharacterList[i];
+                if (c.InitialAge <= 0) continue;
+                c.Birth = new Sim.GameDate(y - c.InitialAge, mo, d);
+            }
         }
 
         private static string Truncate(string s, int max) =>
@@ -1882,10 +2120,50 @@ namespace ACLS.Authoring
             if (!string.IsNullOrWhiteSpace(location)) sb.AppendLine($"[所在] {location}");
             if (!string.IsNullOrWhiteSpace(scene)) sb.AppendLine(scene);
 
+            // 时辰 (tod) — 在 NPC 列表之前
+            var tod = (l1?["tod"] ?? l1?["time_of_day"]) as Newtonsoft.Json.Linq.JObject;
+            if (tod != null)
+            {
+                string shichen = ((string)(tod["sh"] ?? tod["shichen"]) ?? "").Trim();
+                string common = ((string)(tod["cn"] ?? tod["common_name"]) ?? "").Trim();
+                string ls = ((string)(tod["ls"] ?? tod["light_state"]) ?? "").Trim();
+                string rm = ((string)(tod["rm"] ?? tod["reminders"]) ?? "").Trim();
+                if (!string.IsNullOrWhiteSpace(shichen) || !string.IsNullOrWhiteSpace(common) || !string.IsNullOrWhiteSpace(ls) || !string.IsNullOrWhiteSpace(rm))
+                {
+                    sb.Append("[时辰] ");
+                    if (!string.IsNullOrWhiteSpace(shichen)) sb.Append(shichen);
+                    if (!string.IsNullOrWhiteSpace(common)) sb.Append($"（{common}）");
+                    if (!string.IsNullOrWhiteSpace(ls)) sb.Append($"·{ls}");
+                    sb.AppendLine();
+                    if (!string.IsNullOrWhiteSpace(rm)) sb.AppendLine($"  提示：{rm}");
+                }
+            }
+
+            // 气候 (cli) — 在 NPC 列表之前
+            var cli = (l1?["cli"] ?? l1?["climate"]) as Newtonsoft.Json.Linq.JObject;
+            if (cli != null)
+            {
+                string w = ((string)(cli["w"] ?? cli["weather"]) ?? "").Trim();
+                string light = ((string)(cli["l"] ?? cli["light"]) ?? "").Trim();
+                string wd = ((string)(cli["wd"] ?? cli["wind"]) ?? "").Trim();
+                string tmp = ((string)(cli["tmp"] ?? cli["temperature"]) ?? "").Trim();
+                if (!string.IsNullOrWhiteSpace(w) || !string.IsNullOrWhiteSpace(light) || !string.IsNullOrWhiteSpace(wd) || !string.IsNullOrWhiteSpace(tmp))
+                {
+                    sb.Append("[气候] ");
+                    var parts = new System.Collections.Generic.List<string>();
+                    if (!string.IsNullOrWhiteSpace(w)) parts.Add(w);
+                    if (!string.IsNullOrWhiteSpace(light)) parts.Add(light);
+                    if (!string.IsNullOrWhiteSpace(wd)) parts.Add(wd);
+                    if (!string.IsNullOrWhiteSpace(tmp)) parts.Add(tmp);
+                    sb.AppendLine(string.Join("·", parts));
+                }
+            }
+
             var npcs = (l1?["an"] ?? l1?["active_npcs"]) as Newtonsoft.Json.Linq.JArray
                 ?? (obj["an"] ?? obj["active_npcs"]) as Newtonsoft.Json.Linq.JArray;
             if (npcs != null)
             {
+                sb.AppendLine("[聚落内]");
                 foreach (var n in npcs)
                 {
                     string name = ((string)(n["n"] ?? n["name"]) ?? "").Trim();
@@ -1897,31 +2175,82 @@ namespace ACLS.Authoring
                 }
             }
 
-            if (!string.IsNullOrWhiteSpace(situation)) sb.AppendLine(situation);
+            // 逻辑关联 NPC (lrn) — 在聚落内之后
+            var lrn = (l1?["lrn"] ?? l1?["logic_related_npcs"]) as Newtonsoft.Json.Linq.JArray
+                ?? (obj["lrn"] ?? obj["logic_related_npcs"]) as Newtonsoft.Json.Linq.JArray;
+            if (lrn != null)
+            {
+                sb.AppendLine("[逻辑关联]");
+                foreach (var n in lrn)
+                {
+                    string name = ((string)(n["n"] ?? n["name"]) ?? "").Trim();
+                    if (string.IsNullOrWhiteSpace(name)) continue;
+                    string loc = ((string)(n["loc"] ?? n["location"]) ?? "").Trim();
+                    string rt = ((string)(n["rt"] ?? n["relation_type"]) ?? "").Trim();
+                    string ca = ((string)(n["ca"] ?? n["current_action"]) ?? "").Trim();
+                    int rel = (n["rv"] ?? n["relation_value"])?.ToObject<int>() ?? 0;
+                    sb.AppendLine($"· {name}（{loc}，{rt}，关系{rel:+#;-#;0}）：{ca}");
+                }
+            }
 
-            // exits：兼容字符串列表和 {destination, description} 对象列表
+            // 故事线 (sln) — 在 NPC 之后
+            var sln = (l1?["sln"] ?? l1?["storylines"]) as Newtonsoft.Json.Linq.JArray
+                ?? (obj["sln"] ?? obj["storylines"]) as Newtonsoft.Json.Linq.JArray;
+            if (sln != null)
+            {
+                sb.AppendLine("[活跃故事线]");
+                foreach (var s in sln)
+                {
+                    string ti = ((string)(s["ti"] ?? s["title"]) ?? "").Trim();
+                    if (string.IsNullOrWhiteSpace(ti)) continue;
+                    string st = ((string)(s["st"] ?? s["status"]) ?? "").Trim();
+                    string cs = ((string)(s["cs"] ?? s["current_state"]) ?? "").Trim();
+                    string nb = ((string)(s["nb"] ?? s["next_beat"]) ?? "").Trim();
+                    var inps = s["inp"] ?? s["involved_npcs"];
+                    var inpList = new System.Collections.Generic.List<string>();
+                    if (inps is Newtonsoft.Json.Linq.JArray inpArr)
+                        foreach (var x in inpArr) { string xs = ((string)x ?? "").Trim(); if (!string.IsNullOrWhiteSpace(xs)) inpList.Add(xs); }
+                    sb.AppendLine($"· {st} {ti}");
+                    if (!string.IsNullOrWhiteSpace(cs)) sb.AppendLine($"  当前：{cs}");
+                    if (!string.IsNullOrWhiteSpace(nb)) sb.AppendLine($"  下一拍：{nb}");
+                    if (inpList.Count > 0) sb.AppendLine($"  涉及人物：{string.Join("、", inpList)}");
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(situation)) sb.AppendLine($"[即时处境] {situation}");
+
+            // exits：兼容字符串列表、对象列表({d,u,n} / {destination, urgency, note})
             var exits = (l1?["ex"] ?? l1?["exits"]) as Newtonsoft.Json.Linq.JArray
                 ?? (obj["ex"] ?? obj["exits"]) as Newtonsoft.Json.Linq.JArray;
             if (exits != null)
             {
-                sb.Append("[出口] ");
-                bool first = true;
+                sb.AppendLine("[出口]");
                 foreach (var e in exits)
                 {
                     string ex;
+                    string urgency = "";
+                    string note = "";
                     if (e.Type == Newtonsoft.Json.Linq.JTokenType.Object)
-                        ex = ((string)e["destination"] ?? "").Trim();
-                    else
-                        ex = ((string)e ?? "").Trim();
-
-                    if (!string.IsNullOrWhiteSpace(ex))
                     {
-                        if (!first) sb.Append("  ");
-                        sb.Append(ex);
-                        first = false;
+                        ex = ((string)(e["d"] ?? e["destination"]) ?? "").Trim();
+                        urgency = ((string)(e["u"] ?? e["urgency"]) ?? "").Trim();
+                        note = ((string)(e["n"] ?? e["note"]) ?? "").Trim();
                     }
+                    else
+                    {
+                        ex = ((string)e ?? "").Trim();
+                    }
+
+                    if (string.IsNullOrWhiteSpace(ex)) continue;
+                    var line = new System.Text.StringBuilder($"· {ex}");
+                    if (!string.IsNullOrWhiteSpace(urgency))
+                    {
+                        string prefix = urgency == "high" ? "🔴" : urgency == "medium" ? "🟠" : "🟢";
+                        line.Append($" {prefix}");
+                    }
+                    if (!string.IsNullOrWhiteSpace(note)) line.Append($" {note}");
+                    sb.AppendLine(line.ToString());
                 }
-                sb.AppendLine();
             }
 
             if (sb.Length == 0)

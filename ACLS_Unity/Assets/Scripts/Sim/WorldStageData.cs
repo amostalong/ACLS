@@ -14,6 +14,7 @@ namespace ACLS.Sim
     public sealed class WorldStageData
     {
         public string WorldDescription = "";  // player's world choice (preset blurb or custom text)
+        public string SelectedPresetId = ""; // 玩家选中的预设 id（控制 EraTrend 锚点表等剧本相关数据）
         public string WorldBuild = "";       // World: era, narrative style, cognitive boundaries, anchors (step 1 output)
         public string L4World   = "";         // macro: era, factions, history anchors
         public string L3Expanse = "";         // regional: power distribution, indirect intel
@@ -21,7 +22,62 @@ namespace ACLS.Sim
         public string L2Expansion = "";       // player expansion + storylines (generated after L2, before L1)
         public string L1Stage   = "";         // immediate: current scene state (refreshed each scene)
 
+        // ---- staleness metadata ----
+        // Tracks when each tier was last (re)built and the world state at that time.
+        // Used by StageStaleness to decide whether a re-prompt is needed before the next StagePlay turn.
+        public BuildMeta L1Meta = new BuildMeta();
+        public BuildMeta L2Meta = new BuildMeta();
+        public BuildMeta L3Meta = new BuildMeta();
+        public BuildMeta L4Meta = new BuildMeta();
+
         public bool IsWorldBuilt => !string.IsNullOrWhiteSpace(L4World);
         public bool IsStageBuilt => !string.IsNullOrWhiteSpace(L1Stage);
+
+        // ---- touch helpers ----
+        public void TouchL1(World world, int locationId, int activeNpcCount)
+        {
+            int dayOfYear = (world.Date.Month - 1) * 30 + (world.Date.Day - 1);
+            L1Meta = new BuildMeta
+            {
+                BuiltAt = world.Date,
+                LocationId = locationId,
+                ActiveNpcCount = activeNpcCount,
+                ShichenIndex = dayOfYear % 16,
+            };
+        }
+
+        public void TouchL2(World world, int locationId)
+        {
+            L2Meta = new BuildMeta
+            {
+                BuiltAt = world.Date,
+                LocationId = locationId,
+                ActiveNpcCount = 0,
+                ShichenIndex = -1,
+            };
+        }
+
+        public void TouchL3(World world)
+        {
+            int dayOfYear = (world.Date.Month - 1) * 30 + (world.Date.Day - 1);
+            L3Meta = new BuildMeta { BuiltAt = world.Date, ShichenIndex = dayOfYear % 16 };
+        }
+
+        public void TouchL4(World world)
+        {
+            int dayOfYear = (world.Date.Month - 1) * 30 + (world.Date.Day - 1);
+            L4Meta = new BuildMeta { BuiltAt = world.Date, ShichenIndex = dayOfYear % 16 };
+        }
+
+        // Last-build metadata snapshot. Captured at the time the tier was rebuilt
+        // so StageStaleness can diff against current World state.
+        [Serializable]
+        public struct BuildMeta
+        {
+            public GameDate BuiltAt;
+            public int LocationId;
+            public int ActiveNpcCount;
+            public int ShichenIndex;   // 0-15 for L1 (16 时辰); -1 if N/A
+        }
     }
 }

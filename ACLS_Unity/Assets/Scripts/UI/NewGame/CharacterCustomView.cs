@@ -203,6 +203,14 @@ namespace ACLS.UI
                 if (!success)
                     Log.Warn(Log.Channels.UI, "WorldPipeline failed, continuing with defaults");
 
+                // EraTrend 锚点表按预设加载
+                if (world != null)
+                {
+                    var go = this.gameObject;
+                    if (go != null && go.GetComponent<EraTrendInjector>() == null)
+                        go.AddComponent<EraTrendInjector>().Bind(world, world.Stage.SelectedPresetId);
+                }
+
                 stateMachine?.TransitionTo(GameState.Dialogue);
 
                 if (success && world.Player != null)
