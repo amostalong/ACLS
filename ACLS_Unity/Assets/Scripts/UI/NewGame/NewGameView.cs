@@ -15,11 +15,13 @@ namespace ACLS.UI
     /// </summary>
     public sealed class NewGameView : MonoBehaviour
     {
-        private const float CardW = 780f;
+        private const float CardW = 1140f;
         private const float CardTopOffset = 120f;     // Card 顶端距离屏幕顶部 120px（顶对齐）
         private const float CardBottomPad = 24f;      // Card 底端到屏幕底 24px
-        private const float PresetItemH = 200f;
-        private const float PresetSpacing = 8f;
+        private const int   PresetGridCols = 3;       // 一行几列
+        private const float PresetCellW    = 360f;    // 单卡宽度（包含 spacing）
+        private const float PresetCellH    = 330f;    // 单卡高度（包含 spacing），原本 220，增到 1.5 倍
+        private const float PresetGridSpacing = 14f;
 
         private static readonly Color SelectedColor   = new Color(0.55f, 0.42f, 0.18f, 0.97f);
         private static readonly Color UnselectedColor = new Color(0.22f, 0.22f, 0.28f, 0.95f);
@@ -156,10 +158,10 @@ namespace ACLS.UI
             vpGo.GetComponent<Image>().color = new Color(1, 1, 1, 0.01f);
             vpGo.GetComponent<Mask>().showMaskGraphic = false;
 
-            // Content: VerticalLayoutGroup + ContentSizeFitter 驱动高度
+            // Content: GridLayoutGroup (2 列) + ContentSizeFitter 驱动高度
             var contentGo = new GameObject("Content",
                 typeof(RectTransform),
-                typeof(VerticalLayoutGroup),
+                typeof(GridLayoutGroup),
                 typeof(ContentSizeFitter));
             contentGo.transform.SetParent(vpGo.transform, false);
             var ctRt = browseContent = (RectTransform)contentGo.transform;
@@ -169,14 +171,15 @@ namespace ACLS.UI
             ctRt.anchoredPosition = Vector2.zero;
             ctRt.sizeDelta = new Vector2(0, 0);
 
-            var vlg = contentGo.GetComponent<VerticalLayoutGroup>();
-            vlg.spacing = PresetSpacing;
-            vlg.padding = new RectOffset(0, 0, 0, 0);
-            vlg.childAlignment = TextAnchor.UpperLeft;
-            vlg.childControlWidth = true;
-            vlg.childControlHeight = true;
-            vlg.childForceExpandWidth = true;
-            vlg.childForceExpandHeight = false;
+            var glg = contentGo.GetComponent<GridLayoutGroup>();
+            glg.cellSize = new Vector2(PresetCellW, PresetCellH);
+            glg.spacing = new Vector2(PresetGridSpacing, PresetGridSpacing);
+            glg.padding = new RectOffset(0, 0, 0, 0);
+            glg.startCorner = GridLayoutGroup.Corner.UpperLeft;
+            glg.startAxis = GridLayoutGroup.Axis.Horizontal;
+            glg.childAlignment = TextAnchor.UpperCenter;
+            glg.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
+            glg.constraintCount = PresetGridCols;
 
             var csf = contentGo.GetComponent<ContentSizeFitter>();
             csf.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
@@ -198,13 +201,8 @@ namespace ACLS.UI
                 int captured = i;
 
                 var go = new GameObject($"NgPreset_{p.Id}",
-                    typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button),
-                    typeof(LayoutElement));
+                    typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button));
                 go.transform.SetParent(browseContent, false);
-                var le = go.GetComponent<LayoutElement>();
-                le.minHeight = PresetItemH;
-                le.preferredHeight = PresetItemH;
-                le.flexibleHeight = 0f;
                 go.GetComponent<Image>().color = UnselectedColor;
                 go.GetComponent<Button>().onClick.AddListener(() => OnPresetClicked(captured));
 
@@ -226,28 +224,90 @@ namespace ACLS.UI
                 }
                 else
                 {
-                    var title = UiKit.CreateText(go.transform, "Title", 21, TextAlignmentOptions.TopLeft);
+                    // 垂直布局容器，避免手摆锚点重叠
+                    int pad = 14;
+                    int lineGap = 4;
+
+                    var title = UiKit.CreateText(go.transform, "Title", 19, TextAlignmentOptions.TopLeft);
                     var tRt = (RectTransform)title.transform;
                     tRt.anchorMin = new Vector2(0, 1); tRt.anchorMax = new Vector2(1, 1);
-                    tRt.pivot = new Vector2(0.5f, 1);
-                    tRt.offsetMin = new Vector2(14, -34); tRt.offsetMax = new Vector2(-14, -10);
-                    title.text = $"{p.Title}　·　{p.Era}";
+                    tRt.pivot = new Vector2(0, 1);
+                    tRt.offsetMin = new Vector2(pad, -(10 + 26));
+                    tRt.offsetMax = new Vector2(-pad, -10);
+                    title.enableWordWrapping = false;
+                    title.overflowMode = TextOverflowModes.Ellipsis;
+                    title.text = p.Title;
 
-                    var sub = UiKit.CreateText(go.transform, "Sub", 18, TextAlignmentOptions.TopLeft);
-                    sub.color = new Color(0.92f, 0.85f, 0.65f, 1f);
-                    var sRt = (RectTransform)sub.transform;
-                    sRt.anchorMin = new Vector2(0, 1); sRt.anchorMax = new Vector2(1, 1);
-                    sRt.pivot = new Vector2(0.5f, 1);
-                    sRt.offsetMin = new Vector2(14, -64); sRt.offsetMax = new Vector2(-14, -40);
-                    string charLine = BuildCharLine(p);
-                    sub.text = charLine ?? $"{p.LocationName}";
+                    var era = UiKit.CreateText(go.transform, "Era", 14, TextAlignmentOptions.TopLeft);
+                    var eRt = (RectTransform)era.transform;
+                    eRt.anchorMin = new Vector2(0, 1); eRt.anchorMax = new Vector2(1, 1);
+                    eRt.pivot = new Vector2(0, 1);
+                    eRt.offsetMin = new Vector2(pad, -(40 + 20));
+                    eRt.offsetMax = new Vector2(-pad, -40);
+                    era.color = new Color(0.92f, 0.85f, 0.65f, 1f);
+                    era.enableWordWrapping = false;
+                    era.overflowMode = TextOverflowModes.Ellipsis;
+                    era.text = p.Era;
 
-                    var desc = UiKit.CreateText(go.transform, "Desc", 16, TextAlignmentOptions.TopLeft);
-                    desc.color = new Color(0.78f, 0.78f, 0.78f, 1f);
-                    var dRt = (RectTransform)desc.transform;
-                    dRt.anchorMin = new Vector2(0, 0); dRt.anchorMax = new Vector2(1, 1);
-                    dRt.offsetMin = new Vector2(14, 8); dRt.offsetMax = new Vector2(-14, -68);
+                    var loc = UiKit.CreateText(go.transform, "Loc", 14, TextAlignmentOptions.TopLeft);
+                    var lRt = (RectTransform)loc.transform;
+                    lRt.anchorMin = new Vector2(0, 1); lRt.anchorMax = new Vector2(1, 1);
+                    lRt.pivot = new Vector2(0, 1);
+                    lRt.offsetMin = new Vector2(pad, -(64 + 22));
+                    lRt.offsetMax = new Vector2(-pad, -64);
+                    loc.color = new Color(0.78f, 0.78f, 0.78f, 1f);
+                    loc.enableWordWrapping = false;
+                    loc.overflowMode = TextOverflowModes.Ellipsis;
+                    loc.text = p.LocationName ?? "";
+
+                    // 描述区：ScrollRect + TMP 顶 92..高-8
+                    var scrollGo = new GameObject("DescScroll",
+                        typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(ScrollRect));
+                    scrollGo.transform.SetParent(go.transform, false);
+                    var scrollRt = (RectTransform)scrollGo.transform;
+                    scrollRt.anchorMin = new Vector2(0, 0);
+                    scrollRt.anchorMax = new Vector2(1, 1);
+                    scrollRt.offsetMin = new Vector2(pad, 8);
+                    scrollRt.offsetMax = new Vector2(-pad, -(64 + 22 + lineGap));
+                    scrollGo.GetComponent<Image>().color = new Color(0, 0, 0, 0.25f);
+                    var sr = scrollGo.GetComponent<ScrollRect>();
+                    sr.horizontal = false; sr.vertical = true;
+                    sr.movementType = ScrollRect.MovementType.Clamped;
+                    sr.scrollSensitivity = 40f;
+
+                    var vpGo = new GameObject("VP",
+                        typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Mask));
+                    vpGo.transform.SetParent(scrollGo.transform, false);
+                    var vpRt = (RectTransform)vpGo.transform;
+                    vpRt.anchorMin = Vector2.zero; vpRt.anchorMax = Vector2.one;
+                    vpRt.offsetMin = new Vector2(6, 6); vpRt.offsetMax = new Vector2(-6, -6);
+                    vpGo.GetComponent<Image>().color = new Color(1, 1, 1, 0.01f);
+                    vpGo.GetComponent<Mask>().showMaskGraphic = false;
+                    sr.viewport = vpRt;
+
+                    var contentGo = new GameObject("Content",
+                        typeof(RectTransform), typeof(TextMeshProUGUI), typeof(ContentSizeFitter));
+                    contentGo.transform.SetParent(vpGo.transform, false);
+                    var contentRt = (RectTransform)contentGo.transform;
+                    contentRt.anchorMin = new Vector2(0, 1); contentRt.anchorMax = new Vector2(1, 1);
+                    contentRt.pivot = new Vector2(0.5f, 1);
+                    contentRt.anchoredPosition = Vector2.zero;
+                    contentRt.sizeDelta = Vector2.zero;
+                    sr.content = contentRt;
+
+                    var desc = contentGo.GetComponent<TextMeshProUGUI>();
+                    desc.font = UiKit.TmpFont;
+                    desc.fontSize = 14;
+                    desc.color = new Color(0.82f, 0.82f, 0.82f, 1f);
+                    desc.alignment = TextAlignmentOptions.TopLeft;
+                    desc.enableWordWrapping = true;
+                    desc.overflowMode = TextOverflowModes.Overflow;
+                    desc.richText = false;
                     desc.text = p.CharBlurb;
+
+                    var csf = contentGo.GetComponent<ContentSizeFitter>();
+                    csf.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+                    csf.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
                 }
 
                 presetBtns.Add(go.GetComponent<Button>());

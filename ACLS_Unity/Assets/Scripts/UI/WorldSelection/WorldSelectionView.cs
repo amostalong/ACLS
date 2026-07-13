@@ -11,8 +11,8 @@ namespace ACLS.UI
     public sealed class WorldSelectionView : MonoBehaviour
     {
         private const float CardW = 760f;
-        private const float CardH = 780f;
-        private const float PresetItemH = 88f;
+        private const float CardH = 1170f;       // 原本 780，增到 1.5 倍
+        private const float PresetItemH = 132f;  // 原本 88，增到 1.5 倍
         private const float PresetSpacing = 8f;
         private const float CustomInputH = 100f;
 
@@ -65,7 +65,7 @@ namespace ACLS.UI
 
             BuildTitle();
             BuildPresetList(yFromTop: 58f);
-            BuildErrorLabel(yFromTop: 550f);
+            BuildErrorLabel(yFromTop: 700f);
             BuildNextButton(yFromBottom: 16f);
         }
 
@@ -108,13 +108,56 @@ namespace ACLS.UI
                 titleRt.offsetMin = new Vector2(12, -34); titleRt.offsetMax = new Vector2(-12, -8);
                 titleT.text = $"{preset.Title}　·　{preset.Era}";
 
-                var descT = UiKit.CreateText(go.transform, "PDesc", 17, TextAlignmentOptions.TopLeft);
+                // 描述区：ScrollRect + TextMeshProUGUI。文字多时可滚动。
+                var scrollGo = new GameObject("PDescScroll",
+                    typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(ScrollRect));
+                scrollGo.transform.SetParent(go.transform, false);
+                var scrollRt = (RectTransform)scrollGo.transform;
+                scrollRt.anchorMin = new Vector2(0, 0);
+                scrollRt.anchorMax = new Vector2(1, 1);
+                scrollRt.offsetMin = new Vector2(12, preset.IsCustom ? CustomInputH + 8f : 6f);
+                scrollRt.offsetMax = new Vector2(-12, -36);
+                scrollGo.GetComponent<Image>().color = new Color(0, 0, 0, 0.25f);
+                var sr = scrollGo.GetComponent<ScrollRect>();
+                sr.horizontal = false;
+                sr.vertical = true;
+                sr.movementType = ScrollRect.MovementType.Clamped;
+                sr.scrollSensitivity = 40f;
+
+                var vpGo = new GameObject("VP",
+                    typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Mask));
+                vpGo.transform.SetParent(scrollGo.transform, false);
+                var vpRt = (RectTransform)vpGo.transform;
+                vpRt.anchorMin = Vector2.zero; vpRt.anchorMax = Vector2.one;
+                vpRt.offsetMin = new Vector2(6, 6); vpRt.offsetMax = new Vector2(-6, -6);
+                vpGo.GetComponent<Image>().color = new Color(1, 1, 1, 0.01f);
+                vpGo.GetComponent<Mask>().showMaskGraphic = false;
+                sr.viewport = vpRt;
+
+                var contentGo = new GameObject("Content",
+                    typeof(RectTransform), typeof(TextMeshProUGUI), typeof(ContentSizeFitter));
+                contentGo.transform.SetParent(vpGo.transform, false);
+                var contentRt = (RectTransform)contentGo.transform;
+                contentRt.anchorMin = new Vector2(0, 1);
+                contentRt.anchorMax = new Vector2(1, 1);
+                contentRt.pivot = new Vector2(0.5f, 1);
+                contentRt.anchoredPosition = Vector2.zero;
+                contentRt.sizeDelta = Vector2.zero;
+                sr.content = contentRt;
+
+                var descT = contentGo.GetComponent<TextMeshProUGUI>();
+                descT.font = UiKit.TmpFont;
+                descT.fontSize = 17;
                 descT.color = new Color(0.82f, 0.82f, 0.82f, 1f);
-                var descRt = (RectTransform)descT.transform;
-                descRt.anchorMin = new Vector2(0, 0); descRt.anchorMax = new Vector2(1, 1);
-                descRt.offsetMin = new Vector2(12, preset.IsCustom ? CustomInputH + 8f : 6f);
-                descRt.offsetMax = new Vector2(-12, -36);
+                descT.alignment = TextAlignmentOptions.TopLeft;
+                descT.enableWordWrapping = true;
+                descT.overflowMode = TextOverflowModes.Overflow;
+                descT.richText = false;
                 descT.text = preset.Description ?? preset.Blurb;
+
+                var csf = contentGo.GetComponent<ContentSizeFitter>();
+                csf.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+                csf.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
                 // Custom world: embed a text input inside the card item.
                 if (preset.IsCustom)
@@ -195,6 +238,7 @@ namespace ACLS.UI
             }
 
             world.Stage.WorldDescription = desc;
+            world.Stage.SelectedPresetId = preset.Id ?? "";
             if (errorText != null) errorText.text = "";
 
             SetVisible(false);
@@ -204,6 +248,13 @@ namespace ACLS.UI
             {
                 if (!success && errorText != null)
                     errorText.text = "※ 世界构建失败，将以默认设置继续";
+                // EraTrend 锚点表按预设加载：三国剧本加载史实锚点，其他剧本加载空表。
+                if (world != null)
+                {
+                    var go = gameObject;
+                    if (go != null && go.GetComponent<EraTrendInjector>() == null)
+                        go.AddComponent<EraTrendInjector>().Bind(world, world.Stage.SelectedPresetId);
+                }
                 stateMachine?.TransitionTo(GameState.CharacterCreation);
                 onWorldBuilt?.Invoke();
             });
