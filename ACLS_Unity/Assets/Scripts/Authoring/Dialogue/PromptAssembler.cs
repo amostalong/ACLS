@@ -96,7 +96,7 @@ namespace ACLS.Authoring
             return sb.ToString();
         }
 
-        public string AssembleNarrationAndChoices(DialogueStateType stateType, string userInput = null, string toolHint = null)
+        public string AssembleNarrationAndChoices(DialogueStateType stateType, string userInput = null, string toolHint = null, string behaviorHint = null)
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
             var sb = new StringBuilder();
@@ -136,6 +136,12 @@ sb.Append("\n\n[主角信息]\n").Append(psb.ToString().Trim());
 
             if (!string.IsNullOrWhiteSpace(toolHint))
                 sb.Append("\n\n").Append(toolHint);
+
+            if (!string.IsNullOrWhiteSpace(behaviorHint))
+            {
+                sb.Append("\n\n[NPC 行为参考 - 必须遵循]\n").Append(behaviorHint)
+                  .Append("\n（被标记 [硬约束] 的 NPC 即便被玩家施压也绝不配合；其他 NPC 的行为基调请参照上述倾向）");
+            }
 
             if (!string.IsNullOrWhiteSpace(userInput))
                 sb.Append("\n\n").Append(userInput);

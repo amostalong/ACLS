@@ -20,7 +20,10 @@ namespace ACLS.UI
         private ScrollRect scroll;
         private TextMeshProUGUI statusLabel;
         private TextMeshProUGUI thinkingLabel;
+        private TextMeshProUGUI usageLabel;
+        private TextMeshProUGUI toolActivityLabel;
         private ScrollRect thinkingScroll;
+        private ScrollRect toolScroll;
         private TMP_InputField input;
         private Button sendBtn;
         private Button cancelBtn;
@@ -46,12 +49,19 @@ namespace ACLS.UI
 
             if (bridge.History?.All != null)
                 foreach (var m in bridge.History.All)
+                {
+                    // ToolCall / ToolResult are internal LLM plumbing — never
+                    // surface them as chat rows, even on history replay.
+                    if (m.Role == ChatRole.ToolCall || m.Role == ChatRole.ToolResult) continue;
                     PushBlock(ChatBlock.Static(m.Role, HeaderPrefixFor(m.Role), m.Content));
+                }
 
             bridge.OnBlock += OnBlock;
             bridge.OnBusyChanged += OnBusyChanged;
             bridge.OnChoicesChanged += RefreshChoices;
             bridge.OnThinkingChanged += UpdateThinking;
+            bridge.OnUsageReported += OnUsageReported;
+            bridge.OnToolActivity += OnToolActivity;
 
             if (!bridge.Ready)
             {
@@ -85,6 +95,8 @@ namespace ACLS.UI
                 bridge.OnBusyChanged -= OnBusyChanged;
                 bridge.OnChoicesChanged -= RefreshChoices;
                 bridge.OnThinkingChanged -= UpdateThinking;
+                bridge.OnUsageReported -= OnUsageReported;
+                bridge.OnToolActivity -= OnToolActivity;
             }
         }
 
@@ -114,7 +126,11 @@ namespace ACLS.UI
             leftRt.offsetMin = Vector2.zero;
             leftRt.offsetMax = Vector2.zero;
 
-            var right = new GameObject("Thinking", typeof(RectTransform));
+            // Right side: split vertically. Top ~60% is Thinking (LLM
+            // reasoning stream + token usage footer). Bottom ~40% is the
+            // Tool Activity panel — a dedicated monitor for tool calls and
+            // their results, independent of the thinking stream.
+            var right = new GameObject("Right", typeof(RectTransform));
             right.transform.SetParent(transform, false);
             var rightRt = (RectTransform)right.transform;
             rightRt.anchorMin = new Vector2(0.6f, 0);
@@ -122,11 +138,27 @@ namespace ACLS.UI
             rightRt.offsetMin = Vector2.zero;
             rightRt.offsetMax = Vector2.zero;
 
+            var thinkingPanel = NewFullPanel("ThinkingPanel", right.transform, new Vector2(0, 0.4f), new Vector2(1, 1));
+            var toolPanel = NewFullPanel("ToolPanel", right.transform, new Vector2(0, 0), new Vector2(1, 0.4f));
+
             BuildHistory(left.transform);
             BuildStatusBar(left.transform);
             BuildChoicesRow(left.transform);
             BuildInputRow(left.transform);
-            BuildThinking(right.transform);
+            BuildThinking(thinkingPanel.transform);
+            BuildToolPanel(toolPanel.transform);
+        }
+
+        private static GameObject NewFullPanel(string name, Transform parent, Vector2 anchorMin, Vector2 anchorMax)
+        {
+            var go = new GameObject(name, typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var rt = (RectTransform)go.transform;
+            rt.anchorMin = anchorMin;
+            rt.anchorMax = anchorMax;
+            rt.offsetMin = Vector2.zero;
+            rt.offsetMax = Vector2.zero;
+            return go;
         }
 
         private void BuildHistory(Transform parent)
@@ -422,6 +454,117 @@ namespace ACLS.UI
             var textCsf = textGo.GetComponent<ContentSizeFitter>();
             textCsf.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
             textCsf.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            // ── Usage label: token / time stats, appended below the thinking
+            //    body. Lives inside ThinkingScroll.Content so it scrolls with
+            //    the thinking stream, but never appears in the main ChatPanel.
+            var usageGo = new GameObject("Usage",
+                typeof(RectTransform), typeof(CanvasRenderer), typeof(TextMeshProUGUI), typeof(ContentSizeFitter));
+            usageGo.transform.SetParent(contentGo.transform, false);
+            usageLabel = usageGo.GetComponent<TextMeshProUGUI>();
+            usageLabel.font = UiKit.TmpFont;
+            usageLabel.fontSize = 13;
+            usageLabel.color = new Color(0.55f, 0.55f, 0.6f, 1f);
+            usageLabel.alignment = TextAlignmentOptions.TopRight;
+            usageLabel.richText = false;
+            usageLabel.enableWordWrapping = false;
+            usageLabel.overflowMode = TextOverflowModes.Overflow;
+            usageLabel.text = "";
+
+            var usageCsf = usageGo.GetComponent<ContentSizeFitter>();
+            usageCsf.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+            usageCsf.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+        }
+
+        // Lower half of the right side. Dedicated monitor for tool calls —
+        // each line shows LLM's request ("▶ name(args)") followed by the
+        // tool's result ("◀ name → result"). Updated independently of the
+        // Thinking stream so a busy tool loop doesn't crowd out the reasoning.
+        private void BuildToolPanel(Transform parent)
+        {
+            var bg = UiKit.CreatePanel(parent, "Bg",
+                Vector2.zero, Vector2.one, new Color(0.05f, 0.05f, 0.08f, 0.9f));
+            bg.transform.SetAsFirstSibling();
+
+            var title = UiKit.CreateText(parent, "Title", 17, TextAlignmentOptions.Left);
+            var titleRt = (RectTransform)title.transform;
+            titleRt.anchorMin = new Vector2(0, 1);
+            titleRt.anchorMax = new Vector2(1, 1);
+            titleRt.pivot = new Vector2(0.5f, 1);
+            titleRt.offsetMin = new Vector2(8, -StatusBarHeight);
+            titleRt.offsetMax = new Vector2(-8, 0);
+            title.color = new Color(0.65f, 0.78f, 0.95f, 1f);
+            title.text = "TOOL ACTIVITY";
+
+            var scrollGo = new GameObject("ToolScroll",
+                typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(ScrollRect));
+            scrollGo.transform.SetParent(parent, false);
+            var scrollRt = (RectTransform)scrollGo.transform;
+            scrollRt.anchorMin = new Vector2(0, 0);
+            scrollRt.anchorMax = new Vector2(1, 1);
+            scrollRt.offsetMin = new Vector2(8, 8);
+            scrollRt.offsetMax = new Vector2(-8, -StatusBarHeight - 8);
+            scrollGo.GetComponent<Image>().color = new Color(1, 1, 1, 0.01f);
+
+            toolScroll = scrollGo.GetComponent<ScrollRect>();
+            toolScroll.horizontal = false;
+            toolScroll.vertical = true;
+            toolScroll.movementType = ScrollRect.MovementType.Clamped;
+            toolScroll.scrollSensitivity = 30f;
+
+            var vpGo = new GameObject("Viewport",
+                typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Mask));
+            vpGo.transform.SetParent(scrollGo.transform, false);
+            var vpRt = (RectTransform)vpGo.transform;
+            vpRt.anchorMin = Vector2.zero;
+            vpRt.anchorMax = Vector2.one;
+            vpRt.offsetMin = new Vector2(8, 8);
+            vpRt.offsetMax = new Vector2(-8, -8);
+            vpGo.GetComponent<Image>().color = new Color(1, 1, 1, 0.01f);
+            vpGo.GetComponent<Mask>().showMaskGraphic = false;
+            toolScroll.viewport = vpRt;
+
+            var contentGo = new GameObject("Content",
+                typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
+            contentGo.transform.SetParent(vpGo.transform, false);
+            var contentRt = (RectTransform)contentGo.transform;
+            contentRt.anchorMin = new Vector2(0, 1);
+            contentRt.anchorMax = new Vector2(1, 1);
+            contentRt.pivot = new Vector2(0.5f, 1);
+            contentRt.anchoredPosition = Vector2.zero;
+            contentRt.sizeDelta = new Vector2(0, 0);
+            toolScroll.content = contentRt;
+
+            var vlg = contentGo.GetComponent<VerticalLayoutGroup>();
+            vlg.spacing = 4;
+            vlg.padding = new RectOffset(8, 8, 8, 8);
+            vlg.childAlignment = TextAnchor.UpperLeft;
+            vlg.childControlWidth = true;
+            vlg.childControlHeight = true;
+            vlg.childForceExpandWidth = true;
+            vlg.childForceExpandHeight = false;
+
+            var csf = contentGo.GetComponent<ContentSizeFitter>();
+            csf.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+            csf.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            // Single TMP that accumulates one line per tool event.
+            var toolGo = new GameObject("ToolActivity",
+                typeof(RectTransform), typeof(CanvasRenderer), typeof(TextMeshProUGUI), typeof(ContentSizeFitter));
+            toolGo.transform.SetParent(contentGo.transform, false);
+            toolActivityLabel = toolGo.GetComponent<TextMeshProUGUI>();
+            toolActivityLabel.font = UiKit.TmpFont;
+            toolActivityLabel.fontSize = 13;
+            toolActivityLabel.color = new Color(0.7f, 0.82f, 0.95f, 1f);
+            toolActivityLabel.alignment = TextAlignmentOptions.TopLeft;
+            toolActivityLabel.richText = false;
+            toolActivityLabel.enableWordWrapping = true;
+            toolActivityLabel.overflowMode = TextOverflowModes.Overflow;
+            toolActivityLabel.text = "";
+
+            var toolCsf = toolGo.GetComponent<ContentSizeFitter>();
+            toolCsf.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+            toolCsf.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
         }
 
         // -------- behavior --------
@@ -475,10 +618,84 @@ namespace ACLS.UI
             ScrollThinkingToBottom();
         }
 
+        // Append one line of usage meta to the Thinking panel. We keep a running
+        // history here (newline-separated) instead of overwriting, so multiple
+        // LLM rounds in a single tool loop are all visible.
+        private void OnUsageReported(LlmUsage last, LlmUsage cumulative)
+        {
+            if (usageLabel == null) return;
+            if (!last.HasData) return;
+            float rt = ChatBridge_LastResponseTime();
+            string rtSuffix = rt > 0f ? $" · {rt:F1}s" : "";
+            string line = $"in {last.InputTokens} · out {last.OutputTokens} · ∑{cumulative.Total}{rtSuffix}";
+            if (string.IsNullOrEmpty(usageLabel.text))
+                usageLabel.text = line;
+            else
+                usageLabel.text = usageLabel.text + "\n" + line;
+            ScrollThinkingToBottom();
+        }
+
+        // Append a tool activity line. Each LLM tool call fires this twice:
+        // once with result="" right after the LLM requests the tool, and once
+        // with the actual result string after the tool runs. We render them
+        // in place so the player sees the call → result pair.
+        private void OnToolActivity(int round, string toolName, string args, string result)
+        {
+            if (toolActivityLabel == null) return;
+            if (string.IsNullOrEmpty(toolName)) return;
+            string shortArgs = TruncateForActivity(args, 80);
+            string line;
+            if (string.IsNullOrEmpty(result))
+            {
+                // Request line — colored as a request marker.
+                line = $"R{round} ▶ {toolName}({shortArgs})";
+            }
+            else
+            {
+                string shortResult = TruncateForActivity(result, 120);
+                line = $"R{round} ◀ {toolName} → {shortResult}";
+            }
+            if (string.IsNullOrEmpty(toolActivityLabel.text))
+                toolActivityLabel.text = line;
+            else
+                toolActivityLabel.text = toolActivityLabel.text + "\n" + line;
+            ScrollToolToBottom();
+        }
+
+        private static string TruncateForActivity(string s, int max)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            s = s.Replace("\n", " ").Replace("\r", " ");
+            return s.Length <= max ? s : s.Substring(0, max) + "…";
+        }
+
+        // Small bridge accessor so OnUsageReported doesn't have to know about
+        // ChatBridge's internal property naming.
+        private float ChatBridge_LastResponseTime()
+        {
+            return bridge != null ? bridge.LastResponseTime : 0f;
+        }
+
         // ── Block pipeline ──
 
         private void OnBlock(ChatBlock block)
         {
+            // Defensive guard: tool plumbing never makes it into the panel,
+            // regardless of who subscribes upstream.
+            if (block.Role == ChatRole.ToolCall || block.Role == ChatRole.ToolResult) return;
+
+            // Skip blocks with no displayable content. Streaming blocks may push
+            // an empty text on the first tick (the typewriter then ignores them);
+            // Static blocks that arrive empty would otherwise render a blank Msg.
+            if (block.IsStreaming)
+            {
+                if (string.IsNullOrWhiteSpace(block.CurrentStreamText)) return;
+            }
+            else if (string.IsNullOrWhiteSpace(block.StaticText))
+            {
+                return;
+            }
+
             // Re-tick of the active block (data changed) — typewriter's coroutine
             // polls the block each frame, so no action needed here.
             if (block == _activeBlock) return;
@@ -675,6 +892,19 @@ namespace ACLS.UI
             yield return null;
             Canvas.ForceUpdateCanvases();
             thinkingScroll.verticalNormalizedPosition = 0f;
+        }
+
+        private void ScrollToolToBottom()
+        {
+            if (toolScroll == null) return;
+            StartCoroutine(ScrollToolNextFrame());
+        }
+
+        private IEnumerator ScrollToolNextFrame()
+        {
+            yield return null;
+            Canvas.ForceUpdateCanvases();
+            toolScroll.verticalNormalizedPosition = 0f;
         }
 
         private void ScrollToBottom()

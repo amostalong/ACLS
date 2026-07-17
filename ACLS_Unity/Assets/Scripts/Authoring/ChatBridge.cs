@@ -47,6 +47,7 @@ namespace ACLS.Authoring
         public event Action<IReadOnlyList<LlmReply.Choice>> OnChoicesChanged;
         public event Action<IReadOnlyList<LlmReply.Participant>> OnParticipantsChanged;
         public event Action<LlmUsage, LlmUsage> OnUsageReported;   // (lastCall, cumulative)
+        public event Action<int, string, string, string> OnToolActivity;   // (round, toolName, args, result) — UI renders this in the Thinking panel
         public event Action<string> OnThinkingChanged;
         public event Action<string> OnMessageDelta;
         public event Action<string> OnSystemMessage;
@@ -170,15 +171,20 @@ namespace ACLS.Authoring
             {
                 LastUsage = last;
                 CumulativeUsage = cumulative;
+                // Token usage no longer goes into the main ChatPanel — the panel
+                // would otherwise fill with empty-looking rows whenever a tool
+                // round produces no narration. The Thinking panel subscribes via
+                // OnUsageReported to render these stats out of the way.
                 OnUsageReported?.Invoke(last, cumulative);
-                // Push a meta block (token usage) right after the assistant's
-                // streaming block. View queues it behind the active typewriter.
-                if (last.HasData)
-                {
-                    string rt = LastResponseTime > 0f ? $" · {LastResponseTime:F1}s" : "";
-                    string metaText = $"<size=14><color=#555555><align=right>in {last.InputTokens} · out {last.OutputTokens} · ∑{cumulative.Total}{rt}</align></color></size>";
-                    OnBlock?.Invoke(UI.ChatBlock.Static(ChatRole.System, "", metaText));
-                }
+            };
+
+            // Tool activity forwarder: each round the LLM requests tools and
+            // each tool returns, we re-fire so the UI can show "what tool
+            // was called, with what args, and what came back" alongside the
+            // thinking stream.
+            orchestrator.OnToolActivity += (round, name, args, result) =>
+            {
+                OnToolActivity?.Invoke(round, name, args, result);
             };
 
             orchestrator.OnResponseTime += seconds =>

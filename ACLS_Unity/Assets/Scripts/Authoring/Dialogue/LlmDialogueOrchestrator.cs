@@ -8,6 +8,7 @@ using ACLS.Data;
 using ACLS.Llm;
 using ACLS.Llm.Tools;
 using ACLS.Sim;
+using ACLS.Sim.Narrative;
 using ACLS.Logging;
 using Cysharp.Threading.Tasks;
 using UnityEngine;
@@ -55,6 +56,11 @@ namespace ACLS.Authoring
         public event Action<string> OnSystemDelta;             // system status delta (pipeline progress, etc.)
         public event Action OnStreamingBegin;                  // fired before each new streaming call
         public event Action OnStreamingEnd;                    // fired after stream ends, before ParseResponse
+
+        // Tool activity surfaces. Fired in CompleteStreamWithTools so the UI can
+        // show "what tools is the LLM calling and what came back" without having
+        // to scrape the log. Args: (round, toolName, args, resultSummary).
+        public event Action<int, string, string, string> OnToolActivity;
 
         // ---- tools ----
         public ToolRegistry ToolRegistry { get; } = ToolRegistry.Instance;
@@ -179,7 +185,8 @@ namespace ACLS.Authoring
             Log.Info(Log.Channels.Llm, "▶ StartOpening: preset={0}", preset?.Title ?? preset?.Blurb);
             var state = new OpeningSceneState(this, preset);
             string toolHint = BuildToolHint();
-            string narrationPrompt = PromptAssembler?.AssembleNarrationAndChoices(state.StateType, state.BuildOpeningAction(), toolHint) ?? "";
+            string behaviorHint = BuildBehaviorHint(state.BuildOpeningAction());
+            string narrationPrompt = PromptAssembler?.AssembleNarrationAndChoices(state.StateType, state.BuildOpeningAction(), toolHint, behaviorHint) ?? "";
 
             SetBusy(true);
             var thisCts = CancellationTokenSource.CreateLinkedTokenSource(lifetimeCts.Token);
@@ -622,7 +629,7 @@ namespace ACLS.Authoring
 
                 // ══════ 全部完成 ══════
                 Log.Info(Log.Channels.Llm, "[OK] 世界流水线全部完成 (+{0:F1}s total)", pipelineSw.Elapsed.TotalSeconds);
-                EmitSystemStatus("世界构建全部完成，准备开始游戏 🎮");
+                EmitSystemStatus("世界构建全部完成，准备开始游戏");
                 // Release the busy flag BEFORE the onComplete callback runs so that
                 // callbacks (e.g. NewGameView → chat.StartOpening) see Busy=false
                 // and can kick off the next LLM call without bouncing off the guard.
@@ -892,7 +899,8 @@ namespace ACLS.Authoring
 
             var swAssemble = System.Diagnostics.Stopwatch.StartNew();
             string toolHint = BuildToolHint();
-            string narrationPrompt = PromptAssembler?.AssembleNarrationAndChoices(CurrentState.StateType, userInput, toolHint) ?? "";
+            string behaviorHint = BuildBehaviorHint(userInput);
+            string narrationPrompt = PromptAssembler?.AssembleNarrationAndChoices(CurrentState.StateType, userInput, toolHint, behaviorHint) ?? "";
             swAssemble.Stop();
             Log.Debug(Log.Channels.Llm, "[Timing] Prompt组装: {0:F2}s, prompt长度={1}", swAssemble.Elapsed.TotalSeconds, narrationPrompt?.Length ?? 0);
 
@@ -1098,6 +1106,50 @@ namespace ACLS.Authoring
             sb.Append("- `read_player_state()` / `read_memory({\"count\": 5})` / `read_era_trend()` / `write_memory({\"date\": \"184年01月08日\", \"event\": \"...\"})`\n");
             sb.Append("\n**参数名、参数格式、参数值都要严格正确**。调用报错时请仔细检查参数格式（如忘了引号、拼错参数名），换另一工具调用或者不调，不要重复试同一工具。\n");
             return sb.ToString();
+        }
+
+        /// <summary>
+        /// 从 world.Stage.L1Stage 文本提取 [聚落内] 段 NPC 名字，
+        /// 结合 playerText 计算 behavior hint 文本。非 StagePlay 状态返回 null。
+        /// </summary>
+        private string BuildBehaviorHint(string playerText)
+        {
+            if (CurrentState?.StateType != DialogueStateType.StagePlay) return null;
+            var l1 = World?.Stage?.L1Stage;
+            if (string.IsNullOrEmpty(l1)) return null;
+
+            var names = ExtractSceneNpcNames(l1);
+            if (names == null || names.Count == 0) return null;
+
+            var hints = BehaviorHintCalculator.ComputeAll(names, playerText ?? "");
+            return BehaviorHintCalculator.FormatHints(hints);
+        }
+
+        /// <summary>
+        /// 从 L1Stage 文本里粗略提取 [聚落内] 段的 NPC 名字。
+        /// 期望格式: "· 张穆（郡司马）· 李四（主簿）" 或 "张穆、李四、王五"
+        /// 提取 2-4 字中文名（紧跟 · 或 行首）。
+        /// </summary>
+        private static List<string> ExtractSceneNpcNames(string l1Stage)
+        {
+            var result = new List<string>();
+            if (string.IsNullOrEmpty(l1Stage)) return result;
+
+            int start = l1Stage.IndexOf("[聚落内]");
+            if (start < 0) start = l1Stage.IndexOf("聚落内");
+            if (start < 0) return result;
+            int end = l1Stage.IndexOf('[', start + 1);
+            if (end < 0) end = l1Stage.Length;
+            var section = l1Stage.Substring(start, end - start);
+
+            var matches = System.Text.RegularExpressions.Regex.Matches(
+                section, @"[·\s,，、]([\u4e00-\u9fa5]{2,4})(?=[（(、，,\s]|$)");
+            foreach (System.Text.RegularExpressions.Match m in matches)
+            {
+                var name = m.Groups[1].Value;
+                if (!result.Contains(name)) result.Add(name);
+            }
+            return result;
         }
 
         // Pull the required parameter list out of a tool's JSON Schema so the
@@ -1351,7 +1403,6 @@ namespace ACLS.Authoring
             string last = "";
             int lastEmit = Environment.TickCount;
             string lastNarration = "";
-            int lastNarrationEmit = Environment.TickCount;
 
             int loopCount = 0;
             const int maxToolLoops = 10;
@@ -1394,13 +1445,6 @@ namespace ACLS.Authoring
                         if (TryExtractNarration(raw, out var n) && n != lastNarration)
                         {
                             lastNarration = n;
-                            int now = Environment.TickCount;
-                            // 不节流
-                            lastNarrationEmit = now;
-                            if (PlayerLoopHelper.IsMainThread)
-                                OnNarrationDelta?.Invoke(n);
-                            else
-                                UniTask.Post(() => OnNarrationDelta?.Invoke(n));
                         }
                     }, ct);
 
@@ -1449,6 +1493,10 @@ namespace ACLS.Authoring
                 foreach (var tc in resp.ToolCalls)
                 {
                     workingMessages.Add(ChatMessage.ForToolCall(tc.Id, tc.Name, tc.Args));
+                    // Surface each tool request to the UI before execution. Result
+                    // is empty here; OnToolActivity will fire again after the
+                    // tool runs to deliver the result.
+                    OnToolActivity?.Invoke(loopCount, tc.Name, tc.Args ?? "{}", "");
                 }
 
                 // 2. 执行每个工具
@@ -1459,8 +1507,9 @@ namespace ACLS.Authoring
                     {
                         Log.Error(Log.Channels.Llm, "[ERR] 未知工具: {0} | 可用工具: {1}",
                             tc.Name, string.Join(", ", tools.Select(t => t.Name)));
-                        workingMessages.Add(ChatMessage.ForToolResult(tc.Id,
-                            $"错误：未知工具「{tc.Name}」，可用工具: {string.Join(", ", tools.Select(t => t.Name))}"));
+                        var errResult = $"错误：未知工具「{tc.Name}」，可用工具: {string.Join(", ", tools.Select(t => t.Name))}";
+                        workingMessages.Add(ChatMessage.ForToolResult(tc.Id, errResult));
+                        OnToolActivity?.Invoke(loopCount, tc.Name, tc.Args ?? "{}", errResult);
                         continue;
                     }
 
@@ -1478,6 +1527,7 @@ namespace ACLS.Authoring
 
                     Log.Info(Log.Channels.Llm, "◀ 工具结果: {0} | result={1}", tc.Name, result ?? "(空)");
                     workingMessages.Add(ChatMessage.ForToolResult(tc.Id, result));
+                    OnToolActivity?.Invoke(loopCount, tc.Name, tc.Args ?? "{}", result ?? "");
                 }
 
                 // 重置累积文本，继续循环

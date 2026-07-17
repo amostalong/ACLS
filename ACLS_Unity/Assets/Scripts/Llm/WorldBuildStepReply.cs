@@ -71,17 +71,18 @@ namespace ACLS.Llm
             result.Narration = ((string)(obj["nar"] ?? obj["narration"]) ?? "").Trim();
             result.EraName = ((string)(obj["era"] ?? obj["era_name"]) ?? "").Trim();
             var sdToken = obj["sd"] ?? obj["start_date"];
-            if (sdToken != null && sdToken.Type != Newtonsoft.Json.Linq.JTokenType.Null)
+            if (sdToken != null && sdToken.Type != JTokenType.Null)
             {
                 string sdStr = ((string)sdToken ?? "").Trim();
-                var m = System.Text.RegularExpressions.Regex.Match(sdStr, @"(\d{4})年(\d{1,2})月(\d{1,2})日");
-                if (m.Success)
+                var m = System.Text.RegularExpressions.Regex.Match(sdStr, @"(?<!\d)(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日");
+                if (m.Success &&
+                    int.TryParse(m.Groups[1].Value, out int y) &&
+                    int.TryParse(m.Groups[2].Value, out int mo) &&
+                    int.TryParse(m.Groups[3].Value, out int d) &&
+                    y >= 1 && y <= 9999 &&
+                    DateTime.DaysInMonth(y, mo) >= d)
                 {
-                    int y = int.Parse(m.Groups[1].Value);
-                    int mo = int.Parse(m.Groups[2].Value);
-                    int d = int.Parse(m.Groups[3].Value);
-                    if (y >= 100 && y <= 2200 && mo >= 1 && mo <= 12 && d >= 1 && d <= 31)
-                        result.StartDate = new Sim.GameDate(y, mo, d);
+                    result.StartDate = new Sim.GameDate(y, mo, d);
                 }
             }
             result.NarrativeStyle = ((string)(obj["nst"] ?? obj["narrative_style"]) ?? "").Trim();
@@ -115,7 +116,7 @@ namespace ACLS.Llm
             }
             if (result.StartDate.Year <= 0)
             {
-                error = "start_date 字段缺失或解析失败（必须是 4 位年份 + 2 位月日的合法日期）";
+                error = "sd/start_date 字段缺失或解析失败（必须是合法日期，格式为 4 位年份 + 2 位月日）";
                 Log.Warn(Log.Channels.WorldBuild, "[WorldBuild] ❌ {0}", error);
                 return false;
             }
