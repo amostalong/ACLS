@@ -1443,9 +1443,27 @@ namespace ACLS.Authoring
                                 SetThinking(t);
                             }
                         }
-                        if (TryExtractNarration(raw, out var n) && n != lastNarration)
+                        if (jsonObject)
                         {
-                            lastNarration = n;
+                            if (TryExtractNarration(raw, out var n) && n != lastNarration)
+                            {
+                                lastNarration = n;
+                            }
+                        }
+                        else
+                        {
+                            // Plain-text responses (StagePlay): narration is the
+                            // text up to the first "---" delimiter. Extracting
+                            // it incrementally lets the typewriter fire deltas.
+                            string n = NarrationChoicesTextParser.ExtractNarrationForStreaming(raw.ToString());
+                            if (!string.IsNullOrEmpty(n) && n != lastNarration)
+                            {
+                                lastNarration = n;
+                                if (PlayerLoopHelper.IsMainThread)
+                                    OnNarrationDelta?.Invoke(n);
+                                else
+                                    UniTask.Post(() => OnNarrationDelta?.Invoke(n));
+                            }
                         }
                     }, ct, jsonObject: jsonObject);
 
@@ -1464,7 +1482,7 @@ namespace ACLS.Authoring
                         Time.realtimeSinceStartup, sw.Elapsed.TotalSeconds, loopCount, raw.Length);
 
                     // ── 发出最后一次完整 narration delta（确保打字机看到完整文本） ──
-                    EmitFinalNarrationDelta(raw);
+                    EmitFinalNarrationDelta(raw, jsonObject);
                     OnStreamingEnd?.Invoke();
 
                     resp.Content = raw.ToString();
@@ -1629,10 +1647,18 @@ namespace ACLS.Authoring
         /// <summary>
         /// 流结束后发出最后一次完整的 narration delta，确保打字机效果始终看到完整文本。
         /// </summary>
-        private void EmitFinalNarrationDelta(StringBuilder raw)
+        private void EmitFinalNarrationDelta(StringBuilder raw, bool jsonObject = true)
         {
             if (raw == null || raw.Length == 0) return;
-            if (!TryExtractNarration(raw, out var finalNarration)) return;
+            string finalNarration;
+            if (jsonObject)
+            {
+                if (!TryExtractNarration(raw, out finalNarration)) return;
+            }
+            else
+            {
+                finalNarration = NarrationChoicesTextParser.ExtractNarrationForStreaming(raw.ToString());
+            }
             if (string.IsNullOrWhiteSpace(finalNarration)) return;
 
             if (PlayerLoopHelper.IsMainThread)
