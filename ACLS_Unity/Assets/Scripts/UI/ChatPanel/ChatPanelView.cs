@@ -626,8 +626,8 @@ namespace ACLS.UI
             if (usageLabel == null) return;
             if (!last.HasData) return;
             float rt = ChatBridge_LastResponseTime();
-            string rtSuffix = rt > 0f ? $" · {rt:F1}s" : "";
-            string line = $"in {last.InputTokens} · out {last.OutputTokens} · ∑{cumulative.Total}{rtSuffix}";
+            string rtSuffix = rt > 0f ? $" | {rt:F1}s" : "";
+            string line = $"in {last.InputTokens} | out {last.OutputTokens} | Σ{cumulative.Total}{rtSuffix}";
             if (string.IsNullOrEmpty(usageLabel.text))
                 usageLabel.text = line;
             else

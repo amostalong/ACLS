@@ -194,7 +194,7 @@ namespace ACLS.Authoring
             try
             {
                 var messages = new List<ChatMessage> { new ChatMessage(ChatRole.User, "开始") };
-                var narrationResp = await CompleteStreamWithTools(narrationPrompt, messages, thisCts.Token);
+                var narrationResp = await CompleteStreamWithTools(narrationPrompt, messages, thisCts.Token, jsonObject: false);
                 TrackUsage(narrationResp.Usage);
 
                 if (!NarrationChoicesTextParser.TryParse(narrationResp.Content, out var narration, out var choices, out var effectTag, out var parseError))
@@ -914,7 +914,7 @@ namespace ACLS.Authoring
                 var messages = History.Recent(RecentMessages);
 
                 var swStream = System.Diagnostics.Stopwatch.StartNew();
-                var narrationResp = await CompleteStreamWithTools(narrationPrompt, messages, thisCts.Token);
+                var narrationResp = await CompleteStreamWithTools(narrationPrompt, messages, thisCts.Token, jsonObject: false);
                 swStream.Stop();
                 TrackUsage(narrationResp.Usage);
                 Log.Debug(Log.Channels.Llm, "[Timing] 文本流式调用: {0:F2}s", swStream.Elapsed.TotalSeconds);
@@ -1387,7 +1387,8 @@ namespace ACLS.Authoring
         /// 中间的工具交互对调用方透明。
         /// </summary>
         private async Task<LlmResponse> CompleteStreamWithTools(string prompt,
-            IReadOnlyList<ChatMessage> historyMessages, CancellationToken ct)
+            IReadOnlyList<ChatMessage> historyMessages, CancellationToken ct,
+            bool jsonObject = true)
         {
             SetThinking("");
 
@@ -1446,7 +1447,7 @@ namespace ACLS.Authoring
                         {
                             lastNarration = n;
                         }
-                    }, ct);
+                    }, ct, jsonObject: jsonObject);
 
                 TrackUsage(resp.Usage);
 
